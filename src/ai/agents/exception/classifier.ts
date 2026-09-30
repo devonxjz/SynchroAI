@@ -2,7 +2,6 @@ import type {
   ExceptionAgentInput,
   DeterministicClassification,
   FailureClass,
-  FailureAction,
   ActionBudgetRecord,
 } from './types.ts';
 import { lookupErrorRule } from './matrix.ts';

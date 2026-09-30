@@ -130,7 +130,7 @@ export class PrepareListingOrchestrator {
     }
 
     state.cancelRequested = true;
-    if (state.status === 'running' || state.status === 'queued') {
+    if (state.status === 'running' || state.status === 'queued' || state.status === 'waiting_approval') {
       state.status = 'cancelled';
     }
 

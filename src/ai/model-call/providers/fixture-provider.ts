@@ -82,6 +82,46 @@ export class FixtureModelProvider implements IModelProvider {
       };
     }
 
+    if (request.agentName === 'content_writer') {
+      const p = request.userPayload as Record<string, unknown>;
+      const productTitle = (p.productTitle as string) || (p.title as string) || 'Sản phẩm mẫu';
+      const verifiedFacts = Array.isArray(p.verifiedFacts)
+        ? (p.verifiedFacts as Array<{ id: string; field: string; value: string }>)
+        : [];
+      const firstFact = verifiedFacts[0];
+      const claims = firstFact
+        ? [
+            {
+              text: firstFact.value,
+              outputPath: 'title' as const,
+              sourceRefs: [firstFact.id],
+            },
+          ]
+        : [];
+
+      const factValues = verifiedFacts.map((f) => f.value).join(', ');
+      const rawJson = {
+        title: `[Demo] ${productTitle} - Tối ưu Shopee chuẩn SEO`,
+        description: `[Demo] Mô tả tối ưu hóa tự động cho ${productTitle}. Quy cách: ${factValues || 'chuẩn'}. Đầy đủ công dụng, thành phần, và hướng dẫn sử dụng.`,
+        highlights: ['Chất lượng cao', 'Chính hãng'],
+        claims,
+        missingFacts: [],
+        warnings: [],
+      };
+
+      const usage: ModelUsage = {
+        inputTokens: 100,
+        outputTokens: 75,
+        estimatedCostUsd: 0.0,
+      };
+
+      return {
+        rawJson,
+        usage,
+        providerRequestId: `fixture_content_${Date.now()}`,
+      };
+    }
+
     const rawJson = {
       title: `[Demo] ${request.userPayload.title || 'Sản phẩm mẫu'} - Tối ưu Shopee chuẩn SEO`,
       description: `[Demo] Mô tả tối ưu hóa tự động cho ${request.userPayload.title || 'sản phẩm'}. Đầy đủ công dụng, thành phần, và hướng dẫn sử dụng.`,

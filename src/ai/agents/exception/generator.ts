@@ -14,7 +14,15 @@ import { sanitizeErrorPayload } from './sanitizer.ts';
 export async function handleException(input: ExceptionAgentInput): Promise<ExceptionAnalysisResult> {
   const budgetRecord = globalRetryBudget.getRecord(input.actionId);
   const classification: DeterministicClassification = classifyFailure(input, budgetRecord);
-  const sanitized = sanitizeErrorPayload(input.rawError);
+  const rawCorr =
+    (input as unknown as Record<string, unknown>).correlationId ||
+    (typeof input.rawError === 'object' && input.rawError !== null
+      ? (input.rawError as Record<string, unknown>).correlationId
+      : undefined);
+  const sanitized = sanitizeErrorPayload(
+    input.rawError,
+    typeof rawCorr === 'string' ? rawCorr : undefined
+  );
 
   const baseResult: ExceptionAnalysisResult = {
     failureClass: classification.failureClass,

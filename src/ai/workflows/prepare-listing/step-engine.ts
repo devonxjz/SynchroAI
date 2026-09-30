@@ -1,3 +1,5 @@
+import { generateContent } from '../../agents/content/index.ts';
+import type { ContentSnapshot } from '../../agents/content/types.ts';
 import { generateKeywords, type KeywordOutput } from '../../agents/keywords/index.ts';
 import { localizeContent } from '../../agents/localization/index.ts';
 import { ModelCallGateway } from '../../model-call/index.ts';
@@ -240,9 +242,40 @@ export class StepPipelineEngine {
         if (ctx.handlers.content) {
           return ctx.handlers.content(ctx.snapshot, ctx.state);
         }
+        const contentSnapshot: ContentSnapshot = {
+          id: ctx.snapshot.id,
+          version: ctx.snapshot.version,
+          hash: ctx.snapshot.hash,
+          title: ctx.snapshot.title,
+          language: ctx.snapshot.language,
+          attributes: ctx.snapshot.attributes,
+        };
+        const contentOutput = await generateContent(
+          {
+            snapshot: contentSnapshot,
+            targetLocale: ctx.snapshot.language,
+            manualDraft: {
+              title: ctx.snapshot.title,
+              description: ctx.snapshot.description,
+            },
+          },
+          {
+            tenantId: ctx.state.tenantId,
+            mode: ctx.state.mode,
+            runId: ctx.state.runId,
+            stepId: 'content',
+            attemptId: ctx.state.attemptCounters.content || 1,
+            deadlineMs: Date.now() + 30000,
+          },
+          ctx.gateway
+        );
         return {
-          title: `${ctx.snapshot.title} - Tối ưu Shopee`,
-          description: `${ctx.snapshot.description} - Chuẩn SEO`,
+          title: contentOutput.title,
+          description: contentOutput.description,
+          highlights: contentOutput.highlights,
+          claims: contentOutput.claims,
+          contentHash: ctx.snapshot.hash,
+          sourceLocale: ctx.snapshot.language,
         };
       },
       onSuccess: (state, result: unknown) => {

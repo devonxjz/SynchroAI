@@ -19,6 +19,7 @@ export interface ModelGatewayConfig {
   maxAttemptsPerStep?: number;
   worstCaseReservationUsd?: number;
   liveProvider?: IModelProvider;
+  fixtureProvider?: FixtureModelProvider;
   liveApiKeyConfigured?: boolean;
 }
 
@@ -35,7 +36,7 @@ export class ModelCallGateway {
   constructor(config: ModelGatewayConfig = {}) {
     this.budgetLedger = new BudgetLedger();
     this.cache = new ModelCallCache();
-    this.fixtureProvider = new FixtureModelProvider();
+    this.fixtureProvider = config.fixtureProvider ?? new FixtureModelProvider();
     
     if (config.liveProvider) {
       this.liveProvider = config.liveProvider;

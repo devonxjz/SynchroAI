@@ -36,6 +36,14 @@ export const ERROR_MAPPING_MATRIX: Record<string, ErrorMappingRule> = {
     sourceDoc: 'fixture:demo_v1',
     descriptionVi: 'Chạm giới hạn tần suất gọi API.',
   },
+  'MODEL_RATE_LIMIT': {
+    code: 'MODEL_RATE_LIMIT',
+    failureClass: 'rate_limit',
+    expectedDispatchStatus: 'retryable_not_sent',
+    isVerifiedSpec: false,
+    sourceDoc: 'fixture:openai_v1',
+    descriptionVi: 'Chạm giới hạn tần suất gọi API mô hình ngôn ngữ hoặc vector nhúng.',
+  },
   'DEMO_NETWORK_PRE_DISPATCH': {
     code: 'DEMO_NETWORK_PRE_DISPATCH',
     failureClass: 'network_pre_dispatch',
