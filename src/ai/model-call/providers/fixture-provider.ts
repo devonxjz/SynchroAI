@@ -138,6 +138,15 @@ export class FixtureModelProvider implements IModelProvider {
             'Hệ thống không hỗ trợ đăng hàng loạt tự động để đảm bảo kiểm soát chất lượng. ' +
             'Vui lòng duyệt và xuất bản từng bài đăng thủ công qua trang Quản lý Bài đăng.';
           break;
+        case 'prepare_listing': {
+          const productName = (toolData.productName as string) || 'Sản phẩm mới';
+          answer =
+            `**${productName} – Hàng chính hãng, chất lượng cao**\n\n` +
+            `📝 **Mô tả sản phẩm:**\n${productName} là lựa chọn hàng đầu cho những ai tìm kiếm sản phẩm chất lượng với mức giá hợp lý. Được sản xuất theo quy trình nghiêm ngặt, sản phẩm đảm bảo an toàn và hiệu quả sử dụng.\n\n` +
+            `✅ **Điểm nổi bật:**\n- Chất lượng cao cấp, đạt tiêu chuẩn xuất khẩu\n- Đóng gói chắc chắn, bảo quản tốt\n- Phù hợp làm quà tặng hoặc sử dụng hàng ngày\n- Giao hàng nhanh toàn quốc qua Shopee\n\n` +
+            `🏷️ **Gợi ý từ khóa Shopee:** ${productName}, mua ${productName}, ${productName} chính hãng, ${productName} giá rẻ, ${productName} chất lượng, hàng Việt Nam chất lượng cao`;
+          break;
+        }
         case 'revenue': {
           const groups =
             (toolData.revenueGroups as Array<{ totalAmount: number; currency: string; orderCount: number }>) ?? [];

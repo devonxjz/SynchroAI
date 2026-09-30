@@ -37,7 +37,9 @@ export default function AICopilotPage() {
   const [showDocInput, setShowDocInput] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activationStatus, setActivationStatus] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
+  // Track conversation IDs separately – intake and assistant use different session stores.
+  const [assistantConvId, setAssistantConvId] = useState<string | undefined>(undefined);
+  const [intakeConvId, setIntakeConvId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "msg_init_1",
@@ -83,15 +85,17 @@ export default function AICopilotPage() {
     const idempotencyKey = generateClientKey('req');
 
     try {
-      // If document text or intake keywords, use the intake endpoint
-      const isIntakeRequest = Boolean(docText) || /sản phẩm|quy cách|bài đăng|tạo mới|soạn bài|đóng gói/i.test(text);
+      // Only route to intake when the user has pasted an actual document (RAG ingestion).
+      // Plain text messages — including "Tạo bài đăng X" — go to the assistant endpoint
+      // so OpenAI generates the answer directly in chat without a workflow activation step.
+      const isIntakeRequest = Boolean(docText);
       const endpoint = isIntakeRequest ? "/api/chatbot/intake" : "/api/assistant/messages";
 
       const payload = isIntakeRequest
         ? {
             message: text,
             documentText: docText,
-            conversationId,
+            conversationId: intakeConvId,
             idempotencyKey,
             store: "Shopee VN",
             targetLocale: "vi",
@@ -100,7 +104,7 @@ export default function AICopilotPage() {
         : {
             message: text,
             idempotencyKey,
-            conversationId,
+            conversationId: assistantConvId,
             targetProposalId,
           };
 
@@ -115,8 +119,10 @@ export default function AICopilotPage() {
       }
 
       const data = await res.json();
-      if (data.conversationId) {
-        setConversationId(data.conversationId);
+      if (isIntakeRequest && data.conversationId) {
+        setIntakeConvId(data.conversationId);
+      } else if (!isIntakeRequest && data.conversationId) {
+        setAssistantConvId(data.conversationId);
       }
 
       let returnedDraft: DraftCard | undefined;
