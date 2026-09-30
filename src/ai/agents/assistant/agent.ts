@@ -80,6 +80,27 @@ export async function runAssistant(
     };
   }
 
+  // 0. Greeting flow ("xin chào", "chào bạn", "hello", "hi")
+  const isGreeting = /^(xin\s+chào|chào|chào\s+bạn|chào\s+bot|chào\s+em|hello|hi|hey)($|\s|[!.,?])/i.test(cleanMsg);
+  if (isGreeting) {
+    return {
+      conversationId: convId,
+      answer:
+        'Xin chào bạn! Tôi là Trợ lý AI đồng hành quản lý bán hàng đa sàn. Tôi có thể hỗ trợ bạn kiểm tra việc cần xử lý hôm nay, thống kê doanh thu, tra cứu tình trạng đơn hàng hoặc tiếp nhận quy cách sản phẩm mới để khởi tạo bài đăng. Bạn cần hỗ trợ gì hôm nay?',
+      citations: [
+        {
+          recordType: 'task',
+          recordId: 'task_today',
+          version: 1,
+          internalUrl: '/dashboard/tasks',
+          title: 'Việc cần duyệt & Xử lý hôm nay',
+        },
+      ],
+      status: 'answered',
+      asOf,
+    };
+  }
+
   // 1. Approval flow ("đồng ý", "duyệt", "ok duyệt")
   if (cleanMsg === 'đồng ý' || cleanMsg === 'duyệt' || cleanMsg === 'xác nhận duyệt' || targetProposalId) {
     const approvalRes = handleChatApproval(context, targetProposalId);
