@@ -226,9 +226,10 @@ export class StepPipelineEngine {
           description: `${ctx.snapshot.description} - Chuẩn SEO`,
         };
       },
-      onSuccess: (state, result: ContentArtifact) => {
+      onSuccess: (state, result: unknown) => {
+        const content = result as ContentArtifact;
         state.artifacts.contentId = `art_content_${Date.now()}`;
-        state.artifacts.contentData = result;
+        state.artifacts.contentData = content;
       },
       cleanup: (state) => {
         delete state.artifacts.contentId;
@@ -246,9 +247,10 @@ export class StepPipelineEngine {
         }
         return ['#shopee', '#sale', '#chinhhang'];
       },
-      onSuccess: (state, result: string[]) => {
+      onSuccess: (state, result: unknown) => {
+        const keywords = result as string[];
         state.artifacts.keywordsId = `art_keywords_${Date.now()}`;
-        state.artifacts.keywordsData = result;
+        state.artifacts.keywordsData = keywords;
       },
       cleanup: (state) => {
         delete state.artifacts.keywordsId;
@@ -318,9 +320,10 @@ export class StepPipelineEngine {
           glossaryVersion: locOutput.glossaryVersion,
         };
       },
-      onSuccess: (state, result: LocalizationArtifact) => {
+      onSuccess: (state, result: unknown) => {
+        const loc = result as LocalizationArtifact;
         state.artifacts.localizationId = `art_loc_${Date.now()}`;
-        state.artifacts.localizationData = result;
+        state.artifacts.localizationData = loc;
       },
       cleanup: (state) => {
         delete state.artifacts.localizationId;
@@ -344,9 +347,10 @@ export class StepPipelineEngine {
           hashtags: ctx.state.artifacts.keywordsData || [],
         };
       },
-      onSuccess: (state, result: AssembledArtifact) => {
+      onSuccess: (state, result: unknown) => {
+        const assembled = result as AssembledArtifact;
         state.artifacts.assembledId = `art_assemble_${Date.now()}`;
-        state.artifacts.assembledData = result;
+        state.artifacts.assembledData = assembled;
       },
       cleanup: (state) => {
         delete state.artifacts.assembledId;
@@ -364,9 +368,10 @@ export class StepPipelineEngine {
         }
         return { approved: true, score: 95, issues: [] };
       },
-      onSuccess: (state, result: ReviewArtifact) => {
+      onSuccess: (state, result: unknown) => {
+        const review = result as ReviewArtifact;
         state.artifacts.reviewId = `art_review_${Date.now()}`;
-        state.artifacts.reviewData = result;
+        state.artifacts.reviewData = review;
       },
       cleanup: (state) => {
         delete state.artifacts.reviewId;
@@ -405,10 +410,12 @@ export class StepPipelineEngine {
           blockingReasons: blockingReasons.length > 0 ? blockingReasons : undefined,
         };
       },
-      onSuccess: (state, result: ProposalArtifact) => {
-        state.artifacts.proposalId = result.proposalId;
-        state.artifacts.proposalData = result;
+      onSuccess: (state, result: unknown) => {
+        const proposal = result as ProposalArtifact;
+        state.artifacts.proposalId = proposal.proposalId;
+        state.artifacts.proposalData = proposal;
       },
+
       cleanup: (state) => {
         delete state.artifacts.proposalId;
         delete state.artifacts.proposalData;
