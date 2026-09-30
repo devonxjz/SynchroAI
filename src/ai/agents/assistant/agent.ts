@@ -29,7 +29,7 @@ const ASSISTANT_SYSTEM_INSTRUCTION =
   'Khi intent là "listing_confirm": xác nhận đã nhận nội dung bài đăng trong toolData.extractedTitle, sau đó hỏi người dùng muốn làm gì tiếp theo (đăng Shopee / chỉnh sửa / lưu nháp).\n' +
   'Khi intent là "prepare_listing": soạn tiêu đề hấp dẫn, mô tả chi tiết (ít nhất 3 đoạn) và gợi ý 5-8 từ khóa Shopee cho sản phẩm trong toolData.productName. Trả lời trực tiếp bằng nội dung hoàn chỉnh mà không yêu cầu xác nhận thêm.\n' +
   'Khi intent là "batch_publish_guard": giải thích rằng hệ thống không hỗ trợ đăng hàng loạt tự động và yêu cầu xác nhận từng bài.\n' +
-  'Khi intent là "unknown": hướng dẫn người dùng hỏi về doanh thu, công việc hôm nay, hoặc tìm kiếm sản phẩm.\n' +
+  'Khi intent là "open_qa": trả lời câu hỏi của người dùng dựa trên chuyên môn quản lý bán hàng đa sàn thương mại điện tử tại Việt Nam và Đông Nam Á. Hãy hữu ích nhất có thể và đưa ra lời khuyên thực tế, súc tích.\n' +
   'Output PHẢI là JSON hợp lệ đúng định dạng: {"answer":"<câu trả lời tiếng Việt>"}';
 
 // Module-level gateway – shares cache / budget across all assistant requests.
@@ -372,7 +372,7 @@ export async function runAssistant(
 
   // 7. Fallback – AI provides helpful guidance rather than a static error string.
   const fallbackAnswer = await callAssistantAI(
-    context, convId, 'unknown', {}, message, remaining()
+    context, convId, 'open_qa', { userQuestion: message }, message, remaining()
   );
   return { conversationId: convId, answer: fallbackAnswer, citations: [], status: 'needs_clarification', asOf };
 }

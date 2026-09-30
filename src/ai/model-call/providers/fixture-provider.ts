@@ -203,9 +203,22 @@ export class FixtureModelProvider implements IModelProvider {
           }
           break;
         }
+        case 'open_qa': {
+          const userQ = (toolData.userQuestion as string) || '';
+          // Fixture provides a context-aware stub; real mode uses OpenAI to answer freely.
+          if (/tăng\s*(doanh\s*số|chuyển\s*đổi|đơn\s*hàng)/i.test(userQ)) {
+            answer =
+              'Để tăng doanh số trên Shopee bạn có thể: (1) Tối ưu tiêu đề và từ khóa sản phẩm theo xu hướng tìm kiếm, ' +
+              '(2) Chạy Flash Sale hoặc Voucher giảm giá vào khung giờ vàng (12h và 21h), ' +
+              '(3) Dùng Shopee Ads để đẩy bài đăng lên top, ' +
+              '(4) Duy trì tỷ lệ phản hồi chat > 80% để được Shopee ưu tiên hiển thị.';
+          } else {
+            answer = `Tôi hiểu bạn đang hỏi: "${userQ.slice(0, 80)}". Trong ngữ cảnh quản lý bán hàng đa sàn, tôi khuyến nghị kiểm tra mục Việc cần duyệt và Đơn hàng để có thông tin cập nhật nhất.`;
+          }
+          break;
+        }
         default:
-          answer =
-            'Tôi chưa tìm được câu trả lời phù hợp. Bạn có thể hỏi về doanh thu, công việc hôm nay, hoặc tìm kiếm tên sản phẩm cụ thể.';
+          answer = `Tôi chưa có dữ liệu cụ thể cho câu hỏi này, nhưng bạn có thể hỏi tôi về doanh thu, công việc hôm nay, hoặc tạo bài đăng sản phẩm mới.`;
       }
 
       return {
