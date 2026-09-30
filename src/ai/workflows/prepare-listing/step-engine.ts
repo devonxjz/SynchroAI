@@ -1,3 +1,4 @@
+import { generateKeywords, type KeywordOutput } from '../../agents/keywords/index.ts';
 import { localizeContent } from '../../agents/localization/index.ts';
 import { ModelCallGateway } from '../../model-call/index.ts';
 import type {
@@ -13,7 +14,7 @@ import type {
 
 export interface NodeHandlers {
   content?: (snapshot: ProductSnapshot, state: WorkflowState) => Promise<ContentArtifact>;
-  keywords?: (snapshot: ProductSnapshot, state: WorkflowState) => Promise<string[]>;
+  keywords?: (snapshot: ProductSnapshot, state: WorkflowState) => Promise<KeywordOutput | string[]>;
   localization?: (
     content: ContentArtifact,
     targetLocale: string,
@@ -139,7 +140,25 @@ export class StepPipelineEngine {
 
       for (const stepName of parallelStepNames) {
         if (state.selectedNodes.includes(stepName) && !state.completedNodes.includes(stepName)) {
-          parallelTasks.push(this.executeStep(stepName, ctx));
+          parallelTasks.push(
+            this.executeStep(stepName, ctx).catch((err) => {
+              if (stepName === 'keywords') {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                state.warnings.push(`Nhánh từ khóa gặp lỗi: ${errMsg}`);
+                state.artifacts.keywordsOutput = {
+                  status: 'fallback',
+                  errorCode: 'PROVIDER_ERROR',
+                  keywords: [],
+                  warnings: [`Nhánh từ khóa gặp lỗi: ${errMsg}`],
+                  snapshotVersion: snapshot.version,
+                  forbiddenListVersion: 'v1.0.0',
+                };
+                state.completedNodes.push('keywords');
+                return;
+              }
+              throw err;
+            })
+          );
         }
       }
 
@@ -245,16 +264,42 @@ export class StepPipelineEngine {
         if (ctx.handlers.keywords) {
           return ctx.handlers.keywords(ctx.snapshot, ctx.state);
         }
-        return ['#shopee', '#sale', '#chinhhang'];
+        return generateKeywords(
+          {
+            snapshot: ctx.snapshot,
+            targetLocale: ctx.state.targetLocale,
+            brand: ctx.snapshot.attributes?.brand || ctx.snapshot.attributes?.Brand,
+            confirmedCategory: ctx.snapshot.attributes?.category || ctx.snapshot.attributes?.Category,
+            forbiddenList: { version: 'v1.0.0', terms: [] },
+          },
+          {
+            tenantId: ctx.state.tenantId,
+            mode: ctx.state.mode,
+            runId: ctx.state.runId,
+            stepId: 'keywords',
+            attemptId: ctx.state.attemptCounters.keywords || 1,
+            deadlineMs: Date.now() + 30000,
+          },
+          ctx.gateway
+        );
       },
       onSuccess: (state, result: unknown) => {
-        const keywords = result as string[];
         state.artifacts.keywordsId = `art_keywords_${Date.now()}`;
-        state.artifacts.keywordsData = keywords;
+        if (result && typeof result === 'object' && 'keywords' in result) {
+          const kwOutput = result as KeywordOutput;
+          state.artifacts.keywordsOutput = kwOutput;
+          state.artifacts.keywordsData = kwOutput.keywords.map((k) => k.phrase);
+          if (kwOutput.status === 'fallback') {
+            state.warnings.push(...kwOutput.warnings);
+          }
+        } else if (Array.isArray(result)) {
+          state.artifacts.keywordsData = result as string[];
+        }
       },
       cleanup: (state) => {
         delete state.artifacts.keywordsId;
         delete state.artifacts.keywordsData;
+        delete state.artifacts.keywordsOutput;
       },
     });
 
@@ -341,10 +386,14 @@ export class StepPipelineEngine {
           throw new Error('No content available to assemble');
         }
 
+        // Tách biệt ranh giới: Chỉ các từ khóa được người dùng hoặc template chủ động chọn mới vào hashtags proposal
+        const selected = ctx.state.artifacts.selectedKeywords;
+        const hashtags = Array.isArray(selected) && selected.length > 0 ? selected : [];
+
         return {
           title: baseContent.title,
           description: baseContent.description,
-          hashtags: ctx.state.artifacts.keywordsData || [],
+          hashtags,
         };
       },
       onSuccess: (state, result: unknown) => {
@@ -366,6 +415,20 @@ export class StepPipelineEngine {
         if (ctx.handlers.review) {
           return ctx.handlers.review(ctx.state.artifacts.assembledData!, ctx.state);
         }
+
+        // Tôn trọng quyền quyết định của Review 08: Nếu sàn đích yêu cầu bắt buộc từ khóa mà gặp fallback
+        if (
+          ctx.state.store.toLowerCase().includes('strict_keywords') &&
+          ctx.state.artifacts.keywordsOutput?.status === 'fallback'
+        ) {
+          return {
+            approved: false,
+            score: 50,
+            issues: ['Sàn yêu cầu bắt buộc có từ khóa nhưng tác nhân từ khóa gặp sự cố'],
+            blockingReasons: ['Từ khóa bắt buộc trên sàn này nhưng chưa tạo được, cần người bán nhập tay'],
+          };
+        }
+
         return { approved: true, score: 95, issues: [] };
       },
       onSuccess: (state, result: unknown) => {
@@ -388,7 +451,8 @@ export class StepPipelineEngine {
 
         const requiresHumanReview = Boolean(
           ctx.state.artifacts.localizationData?.needsReview ||
-          ctx.state.artifacts.localizationData?.experimental
+          ctx.state.artifacts.localizationData?.experimental ||
+          ctx.state.artifacts.reviewData?.approved === false
         );
         const blockingReasons: string[] = [];
         if (ctx.state.artifacts.localizationData?.needsReview) {
@@ -396,6 +460,9 @@ export class StepPipelineEngine {
         }
         if (ctx.state.artifacts.localizationData?.experimental) {
           blockingReasons.push('Ngôn ngữ mục tiêu đang ở trạng thái thử nghiệm (experimental)');
+        }
+        if (ctx.state.artifacts.reviewData?.blockingReasons) {
+          blockingReasons.push(...ctx.state.artifacts.reviewData.blockingReasons);
         }
 
         return {

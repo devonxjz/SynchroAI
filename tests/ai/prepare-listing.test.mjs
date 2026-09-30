@@ -323,3 +323,84 @@ test('LC09: Chặn tự động duyệt khi bản dịch cần review (Downstrea
   );
   assert.ok(state.warnings.some((w) => w.includes('cần người bán duyệt lại')));
 });
+
+test('T07 & K06: Lỗi nhánh từ khóa trước khi Content hoàn tất không làm mất nháp Content', async () => {
+  const orchestrator = new PrepareListingOrchestrator({
+    handlers: {
+      content: async () => {
+        // Content chạy mất 50ms
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          title: 'Tiêu đề sản phẩm hoàn chỉnh',
+          description: 'Mô tả sản phẩm hoàn chỉnh',
+        };
+      },
+      keywords: async () => {
+        // Keywords ném lỗi sớm sau 10ms
+        await new Promise((r) => setTimeout(r, 10));
+        throw new Error('Keywords provider timeout 504 Gateway');
+      },
+    },
+  });
+
+  const input = createDummyInput({ targetLocale: 'vi' });
+  const state = await orchestrator.start(input);
+
+  // Nháp Content phải được lưu trữ nguyên vẹn
+  assert.ok(state.artifacts.contentData);
+  assert.equal(state.artifacts.contentData.title, 'Tiêu đề sản phẩm hoàn chỉnh');
+  // Nhánh từ khóa lưu trạng thái fallback và warning
+  assert.equal(state.artifacts.keywordsOutput?.status, 'fallback');
+  assert.ok(state.warnings.some((w) => w.includes('Nhánh từ khóa') || w.includes('timeout')));
+});
+
+test('T08: Review 08 chặn quy trình khi từ khóa bị lỗi trên sàn bắt buộc từ khóa', async () => {
+  const orchestrator = new PrepareListingOrchestrator({
+    handlers: {
+      keywords: async () => {
+        throw new Error('Timeout connection');
+      },
+    },
+  });
+
+  const input = createDummyInput({
+    store: 'Shopee Official Store Strict_Keywords',
+    targetLocale: 'vi',
+  });
+  const state = await orchestrator.start(input);
+
+  assert.equal(state.status, 'waiting_approval');
+  assert.equal(state.artifacts.proposalData?.requiresHumanReview, true);
+  assert.ok(
+    state.artifacts.proposalData?.blockingReasons?.some((r) =>
+      r.includes('Từ khóa bắt buộc trên sàn này')
+    )
+  );
+});
+
+test('T08b: Ranh giới proposal: Chỉ đưa selectedKeywords vào hashtags, không nhồi nhét gợi ý', async () => {
+  const orchestrator = new PrepareListingOrchestrator({
+    handlers: {
+      keywords: async () => {
+        return {
+          status: 'completed',
+          keywords: [
+            { phrase: 'cà phê phin', reason: 'gợi ý 1', sourceRefs: ['fact-title'], basis: 'product_fact', groundingStatus: 'verified' },
+            { phrase: 'cà phê nguyên chất', reason: 'gợi ý 2', sourceRefs: ['fact-title'], basis: 'product_fact', groundingStatus: 'verified' },
+          ],
+          warnings: [],
+          snapshotVersion: 1,
+          forbiddenListVersion: 'v1.0.0',
+        };
+      },
+    },
+  });
+
+  const input = createDummyInput({ targetLocale: 'vi' });
+  const state = await orchestrator.start(input);
+
+  // Khi chưa có selectedKeywords, hashtags proposal phải rỗng (không tự nhồi các cụm gợi ý)
+  assert.deepEqual(state.artifacts.proposalData?.hashtags, []);
+  // Danh sách gợi ý vẫn được lưu đầy đủ trong keywordsOutput
+  assert.equal(state.artifacts.keywordsOutput?.keywords.length, 2);
+});

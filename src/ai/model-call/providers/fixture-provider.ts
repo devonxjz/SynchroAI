@@ -43,6 +43,45 @@ export class FixtureModelProvider implements IModelProvider {
       };
     }
 
+    if (request.agentName === 'keyword_agent') {
+      const p = request.userPayload as Record<string, unknown>;
+      const verifiedFacts = Array.isArray(p.verifiedFacts)
+        ? (p.verifiedFacts as Array<{ id: string; field: string; value: string }>)
+        : [];
+      const firstFactId = verifiedFacts[0]?.id || 'fact-title';
+      const brand = typeof p.brand === 'string' && p.brand !== 'None' ? p.brand : '';
+      const title = typeof p.productTitle === 'string' ? p.productTitle : 'sản phẩm';
+
+      const rawJson = {
+        keywords: [
+          {
+            phrase: brand ? `${brand} ${title}`.trim() : title,
+            reason: 'Gợi ý từ khóa bám sát tên sản phẩm và thương hiệu',
+            sourceRefs: [firstFactId],
+            basis: 'product_fact',
+          },
+          {
+            phrase: `chính hãng ${title}`.trim(),
+            reason: 'Gợi ý tìm kiếm cho dòng sản phẩm chính hãng',
+            sourceRefs: [firstFactId],
+            basis: 'product_fact',
+          },
+        ],
+      };
+
+      const usage: ModelUsage = {
+        inputTokens: 50,
+        outputTokens: 30,
+        estimatedCostUsd: 0.0,
+      };
+
+      return {
+        rawJson,
+        usage,
+        providerRequestId: `fixture_kw_${Date.now()}`,
+      };
+    }
+
     const rawJson = {
       title: `[Demo] ${request.userPayload.title || 'Sản phẩm mẫu'} - Tối ưu Shopee chuẩn SEO`,
       description: `[Demo] Mô tả tối ưu hóa tự động cho ${request.userPayload.title || 'sản phẩm'}. Đầy đủ công dụng, thành phần, và hướng dẫn sử dụng.`,

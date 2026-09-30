@@ -68,6 +68,7 @@ export interface ReviewArtifact {
   approved: boolean;
   score: number;
   issues: string[];
+  blockingReasons?: string[];
 }
 
 export interface ProposalArtifact {
@@ -87,6 +88,8 @@ export interface WorkflowArtifacts {
   contentData?: ContentArtifact;
   keywordsId?: string;
   keywordsData?: string[];
+  keywordsOutput?: import('../../agents/keywords/types.ts').KeywordOutput;
+  selectedKeywords?: string[];
   localizationId?: string;
   localizationData?: LocalizationArtifact;
   assembledId?: string;
