@@ -1,50 +1,70 @@
 # 14. Trợ lý công việc và yêu cầu bằng tiếng Việt
 
+[Xem Kế hoạch chi tiết 4 chặng triển khai](14-assistant-agent/overview.md)
+
 ## Phạm vi
 
-M16 trả lời về sản phẩm, bài đăng, đơn, tồn, việc chờ và trạng thái run trong doanh nghiệp đang chọn. Trợ lý có thể chuẩn bị đề xuất thao tác nhưng không có tool đăng bài/đổi giá/trừ tồn/đổi quyền. Phụ thuộc 03, 09–13; module API `assistant` và worker `ai/agents/assistant`.
+Giao diện AI Copilot M16 hỗ trợ trả lời về sản phẩm, bài đăng, đơn hàng, tồn kho, công việc chờ và trạng thái điều phối trong doanh nghiệp đang chọn.
+Trợ lý có thể chuẩn bị đề xuất bản xem trước thao tác nhưng không có quyền tự ý đăng bài, đổi giá, trừ tồn kho hoặc đổi phân quyền.
+Module phụ thuộc vào Khối 03, 09, 10, 11, 12 và 13.
+Mã nguồn nằm tại `src/app/api/assistant/` và bộ điều phối tại `src/ai/agents/assistant/`.
 
-## Hợp đồng hội thoại và tool
+## Hợp đồng hội thoại và công cụ
 
-Conversation/message gắn tenant, user, mode, created time. Đổi tenant không mang lịch sử/nguồn của tenant cũ vào prompt mới. Request `POST /assistant/messages` gồm conversation ID, message và idempotency key; server xác minh chủ thể trước khi đọc lịch sử.
+Hội thoại và tin nhắn gắn liền với doanh nghiệp, người dùng, chế độ thực thi và thời gian tạo.
+Chuyển đổi doanh nghiệp không mang lịch sử hoặc nguồn dữ liệu của doanh nghiệp cũ vào phiên trò chuyện mới.
+Yêu cầu `POST /api/assistant/messages` gồm mã phiên hội thoại, nội dung tin nhắn và khóa bất biến idempotency.
+Máy chủ xác minh danh tính và quyền hạn động trên từng yêu cầu.
+Nếu người dùng từng có quyền xem dữ liệu cá nhân nhưng sau đó bị hạ quyền xuống Viewer, hệ thống tự động bóc tách thông tin cá nhân trong lịch sử cũ trước khi nạp vào mô hình.
 
-Tool allowlist ban đầu:
+Danh mục công cụ:
 
-| Tool | Input được schema kiểm tra | Output giới hạn |
+| Công cụ | Đầu vào được schema kiểm tra | Đầu ra giới hạn an toàn |
 |---|---|---|
-| `listPendingTasks` | filter/status, cursor, limit tối đa | Task ID, summary và link nội bộ |
-| `getProductStatus` | product ID | Fact, trạng thái chuẩn bị, listing refs |
-| `getListingStatus` | listing ID | Phiên bản đã gửi, sàn xác nhận/lỗi |
-| `getOrderIssue` | order ID | Dòng hàng và vấn đề đã lọc theo vai trò |
-| `getInventoryStatus` | variant ID | Available, buffer, desired/confirmed |
-| `prepareActionPreview` | action intent + target IDs cụ thể | Proposal draft ID, không thực thi |
+| `searchCatalogOrTasks` | Từ khóa tên gọi, bộ lọc loại và giới hạn tối đa | Danh sách mã định danh thật, tên hiển thị và điểm phù hợp |
+| `listPendingTasks` | Bộ lọc trạng thái, con trỏ và giới hạn tối đa | Mã công việc, tóm tắt và liên kết nội bộ hợp lệ |
+| `getProductStatus` | Mã sản phẩm cụ thể | Sự thật sản phẩm, trạng thái chuẩn bị và liên kết bài đăng |
+| `getListingStatus` | Mã bài đăng cụ thể | Phiên bản đã gửi và phản hồi xác nhận hoặc lỗi từ sàn |
+| `getOrderIssue` | Mã đơn hàng cụ thể | Dòng hàng và vấn đề đã bóc tách thông tin cá nhân theo vai trò |
+| `getInventoryStatus` | Mã biến thể SKU cụ thể | Tồn kho khả dụng, mức đệm an toàn và số lượng đã chốt |
+| `prepareActionPreview` | Ý định hành động và danh sách mã đối tượng | Mã bản nháp đề xuất chuẩn Khối 10, tuyệt đối không thực thi |
 
-Tenant và quyền được đóng trong server context, không để model truyền `organizationId` hay role cho tool. Mỗi tool xác minh lại object scope, limit và projection; không cho model chạy SQL/raw URL. `prepareActionPreview` là ghi bản nháp nội bộ có permission, idempotency, rate limit và audit, không có tác dụng ngoài sàn.
+Doanh nghiệp và quyền hạn được đóng kín trong ngữ cảnh máy chủ, không để mô hình tự truyền định danh doanh nghiệp hay vai trò vào tham số công cụ.
+Mỗi công cụ xác minh lại phạm vi đối tượng, giới hạn và hình chiếu dữ liệu.
+Hệ thống không sử dụng cache gateway dùng chung cho câu trả lời hội thoại để tránh rò rỉ dữ liệu giữa các quyền.
+Khóa bất biến được lưu vết bền vững, xử lý tuần tự hai yêu cầu đồng thời và báo lỗi 409 khi nội dung thay đổi.
 
-Output có `answer`, `citations[{recordType,recordId,version}]`, `actionPreviewId` nếu có, `status=answered|needs_clarification|preview_ready|unavailable`, `asOf`. Server tạo URL từ ID đã authorize, không render URL/HTML AI tự bịa. Cite record đã xóa/ngoài quyền bị loại; nếu không còn bằng chứng thì không trả kết luận chắc chắn.
+Đầu ra phản hồi gồm câu trả lời tiếng Việt, danh sách nguồn dẫn chứng có phiên bản, mã xem trước hành động nếu có, trạng thái và thời điểm chốt số liệu.
+Các số liệu quan trọng và trạng thái bài đăng được biểu diễn qua cấu trúc khẳng định do máy chủ kiểm soát, mô hình không được nói ngược sự thật kỹ thuật.
+Nguồn dẫn chứng trỏ tới bản ghi đã bị xóa hoặc ngoài phạm vi quyền bị loại bỏ ngay lập tức kèm theo việc loại bỏ kết luận phụ thuộc.
 
 ## Luồng triển khai
 
-1. Viết các read tool và test tenant/role trước khi nối LLM. Tổng số việc/tổng tiền tính bằng SQL/code với filter quyền và currency; model chỉ diễn đạt.
-2. Router nhận câu hỏi và chọn intent whitelist. "Hôm nay" tính theo múi giờ user, truy vấn thời gian UTC tương ứng.
-3. Đặt giới hạn ban đầu tối đa 5 tool calls/lượt và deadline 30 giây, áp ngân sách 03. Chạm giới hạn trả phần có nguồn và trạng thái chưa hoàn tất.
-4. Câu "đăng hết đi" chưa có phạm vi: hiển thị danh sách/điều kiện dự kiến, không cấp phép hàng loạt. MVP không thực thi batch publish; người dùng chọn một listing hoặc chuyển tới danh sách để duyệt riêng.
-5. Với một action rõ ràng, tạo proposal/bản xem trước rồi dùng đúng 10–11. Câu "đồng ý" chỉ hợp lệ khi gắn proposal ID/hash đang chờ và server kiểm tra như nút duyệt; không coi lịch sử chat là approval vĩnh viễn.
-6. Khi trả lời trạng thái, chỉ nói "đã đăng" nếu action/listing confirmed. Pending phải nói đang chờ/đang gửi, có link và thời gian cập nhật.
-7. LLM lỗi thì M16 vẫn hiện task/activity và đường dẫn thao tác thường; không khóa nghiệp vụ vì chat hỏng.
+1. Xây dựng các công cụ đọc dữ liệu, tìm kiếm phụ trợ và kiểm thử phân quyền động trước khi kết nối với mô hình. Tổng số việc tính bằng truy vấn đếm tổng trong cơ sở dữ liệu. Doanh thu tính trên đơn hàng đã xác nhận hoặc hoàn thành và tách biệt rõ ràng theo từng loại tiền tệ.
+2. Khoảng thời gian hôm nay được tính theo khoảng nửa mở `[đầu ngày, đầu ngày kế tiếp)` theo múi giờ địa phương của người dùng và chuyển đổi sang dải thời gian UTC tương ứng.
+3. Áp dụng hạn mức chung toàn request tối đa 5 tool calls, 3 model calls và deadline 30 giây. Khi chạm giới hạn, hệ thống trả về phần kết quả đã có kèm trạng thái tương ứng.
+4. Xử lý câu lệnh diện rộng như đăng hết bài: Chỉ hiển thị danh sách điều kiện dự kiến, không cấp phép tự động đăng hàng loạt. Phiên bản đầu yêu cầu người dùng duyệt từng bài đăng.
+5. Với một hành động rõ ràng, hệ thống tạo bản xem trước đề xuất theo chuẩn Khối 10. Khi người dùng nói "đồng ý" trong chat mà có nhiều bản nháp, trợ lý yêu cầu chỉ rõ bản nháp cần duyệt. Yêu cầu phê duyệt được chuyển tiếp sang dịch vụ Khối 10 để thẩm định toàn diện.
+6. Cập nhật giao diện AI Copilot loại bỏ văn bản mẫu nguy hiểm. Hiển thị tin nhắn, nguồn dẫn chứng và thẻ xem trước thực tế. Tự động hủy yêu cầu đang gửi khi người dùng chuyển đổi doanh nghiệp.
+7. Khi mô hình ngôn ngữ gặp sự cố, giao diện M16 vẫn duy trì các liên kết thao tác thủ công bình thường, không khóa các nghiệp vụ quản trị vì sự cố trò chuyện.
 
-## Test
+## Ma trận kiểm thử
 
-| Ca | Kỳ vọng |
+| Mã ca | Kỳ vọng kiểm thử |
 |---|---|
-| AS01: "Hôm nay còn việc gì?" | Đếm đúng task được xem, link thật, đúng múi giờ |
-| AS02: Prompt yêu cầu truy cập tenant B | Tool từ chối; response không có dữ liệu B |
-| AS03: VIEWER hỏi địa chỉ khách | Tool projection loại PII, model không nhận PII |
-| AS04: "Đăng hết đi" | Chỉ hỏi/chốt phạm vi hoặc preview, 0 lời gọi sàn |
-| AS05: "Đã đăng chưa?" khi queue pending | Không nói đã đăng |
-| AS06: Đổi tenant rồi dùng conversation ID cũ | 404, không dùng lịch sử cũ |
-| AS07: Injection nằm trong tên product | Không thay đổi tool allowlist/quyền |
-| AS08: Preview xong sản phẩm đổi version | Confirm trả stale, buộc kiểm tra lại |
-| AS09: LLM tạo link không tồn tại | Không render link giả thành bằng chứng |
+| AS01 | Thống kê việc hôm nay tính đúng dải UTC theo múi giờ, đếm tổng từ cơ sở dữ liệu và trả liên kết thật |
+| AS02 | Hai người dùng cùng doanh nghiệp khác quyền không dùng chung cache, Viewer không nhận dữ liệu cá nhân |
+| AS03 | Admin bị hạ quyền xuống Viewer thì toàn bộ dữ liệu cá nhân trong lịch sử cũ bị che giấu |
+| AS04 | Yêu cầu đăng hết bài chỉ tạo bản xem trước danh sách điều kiện và không gọi lệnh gửi sàn |
+| AS05 | Bài đăng đang chờ trong hàng đợi thì khẳng định máy chủ chặn mô hình tuyên bố đã đăng |
+| AS06 | Đổi doanh nghiệp rồi dùng mã phiên cũ bị trả về lỗi 404 và không dùng lịch sử cũ |
+| AS07 | Hai request đồng thời cùng idempotency key chỉ có 1 lượt thực thi, tạo đúng 1 bản xem trước |
+| AS08 | Cùng idempotency key nhưng nội dung tin nhắn khác nhau bị trả về lỗi 409 Conflict |
+| AS09 | Sản phẩm giữ nguyên version nhưng payload đề xuất bị đổi thì lệnh duyệt cũ bị từ chối |
+| AS10 | Hạn mức thời gian toàn request 30 giây tự động hủy tiến trình bằng AbortSignal |
+| AS11 | Chuyển doanh nghiệp khi đang gửi yêu cầu thì tự động loại bỏ phản hồi của doanh nghiệp cũ |
+| AS12 | Có nhiều bản nháp chờ duyệt và người dùng nói đồng ý thì yêu cầu chỉ rõ bản nháp |
+| AS13 | Tấn công injection gọi công cụ lạ hoặc truyền tenantId giả bị chặn ngay tại ranh giới schema |
+| AS14 | Mười câu hỏi nghiệp vụ mẫu có đáp án tính chính xác từ hệ thống và có nguồn dẫn hợp lệ |
 
-Hoàn thành khi 10 câu hỏi nghiệp vụ mẫu có đáp án tính từ fixture, mọi citation truy được bản ghi và mọi yêu cầu ghi chỉ tạo preview hoặc đi qua cổng chung.
+Điều kiện hoàn thành khi nghiệm thu demo trong bộ nhớ vượt qua toàn bộ 14 ca kiểm thử, giao diện Copilot hoạt động tương tác thực tế và đáp ứng đầy đủ điều kiện kết nối với hạ tầng bền vững.
