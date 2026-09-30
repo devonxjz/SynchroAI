@@ -138,6 +138,17 @@ export class FixtureModelProvider implements IModelProvider {
             'Hệ thống không hỗ trợ đăng hàng loạt tự động để đảm bảo kiểm soát chất lượng. ' +
             'Vui lòng duyệt và xuất bản từng bài đăng thủ công qua trang Quản lý Bài đăng.';
           break;
+        case 'listing_confirm': {
+          const title = (toolData.extractedTitle as string) || 'bài đăng';
+          answer =
+            `Tôi đã nhận nội dung bài đăng **"${title}"**! ✅\n\n` +
+            `Bạn muốn làm gì tiếp theo?\n` +
+            `- 📤 **Đăng lên Shopee** – Tôi có thể khởi tạo quy trình xuất bản\n` +
+            `- ✏️ **Chỉnh sửa** – Cho tôi biết điểm nào cần thay đổi\n` +
+            `- 💾 **Lưu nháp** – Lưu lại để dùng sau\n\n` +
+            `Chỉ cần nhắn cho tôi bạn muốn gì!`;
+          break;
+        }
         case 'prepare_listing': {
           const productName = (toolData.productName as string) || 'Sản phẩm mới';
           answer =

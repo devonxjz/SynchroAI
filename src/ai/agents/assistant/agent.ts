@@ -26,6 +26,7 @@ const ASSISTANT_SYSTEM_INSTRUCTION =
   'Bạn là Trợ lý AI Synchro – chuyên gia hỗ trợ quản lý bán hàng đa sàn thương mại điện tử tại Đông Nam Á.\n' +
   'Luôn trả lời bằng tiếng Việt, ngắn gọn, thân thiện và chuyên nghiệp.\n' +
   'Chỉ sử dụng dữ liệu thực từ trường "toolData" được cung cấp; không bịa đặt số liệu.\n' +
+  'Khi intent là "listing_confirm": xác nhận đã nhận nội dung bài đăng trong toolData.extractedTitle, sau đó hỏi người dùng muốn làm gì tiếp theo (đăng Shopee / chỉnh sửa / lưu nháp).\n' +
   'Khi intent là "prepare_listing": soạn tiêu đề hấp dẫn, mô tả chi tiết (ít nhất 3 đoạn) và gợi ý 5-8 từ khóa Shopee cho sản phẩm trong toolData.productName. Trả lời trực tiếp bằng nội dung hoàn chỉnh mà không yêu cầu xác nhận thêm.\n' +
   'Khi intent là "batch_publish_guard": giải thích rằng hệ thống không hỗ trợ đăng hàng loạt tự động và yêu cầu xác nhận từng bài.\n' +
   'Khi intent là "unknown": hướng dẫn người dùng hỏi về doanh thu, công việc hôm nay, hoặc tìm kiếm sản phẩm.\n' +
@@ -189,7 +190,25 @@ export async function runAssistant(
     };
   }
 
-  // 2a. Prepare listing – user wants AI to generate a product listing right away.
+  // 2a-i. Listing content paste – user pastes a pre-generated listing (Tiêu đề + Mô tả + Từ khóa).
+  // Triggered BEFORE the prepare_listing verb match to handle confirmation / next-step intent.
+  const hasListingStructure =
+    /tiêu\s*đề\s*:/i.test(message) &&
+    (/mô\s*tả\s*:/i.test(message) || /từ\s*khóa\s*:/i.test(message));
+  if (hasListingStructure) {
+    // Extract title for display
+    const titleMatch = /tiêu\s*đề\s*:\s*(.+)/i.exec(message);
+    const extractedTitle = titleMatch ? titleMatch[1].split('\n')[0].trim() : 'Bài đăng mới';
+    const answer = await callAssistantAI(
+      context, convId, 'listing_confirm',
+      { extractedTitle, charCount: message.length },
+      message, remaining()
+    );
+    return { conversationId: convId, answer, citations: [], status: 'preview_ready', asOf };
+  }
+
+  // 2a-ii. Prepare listing – user asks AI to generate a product listing on the spot.
+
   const prepareListingMatch = /tạo\s*bài\s*đăng|soạn\s*bài|viết\s*mô\s*tả|tạo\s*sản\s*phẩm|khởi\s*tạo\s*bài/i.exec(cleanMsg);
   if (prepareListingMatch) {
     // Extract product name: everything after the matched verb phrase.
