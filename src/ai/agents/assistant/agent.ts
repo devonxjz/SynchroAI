@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   ServerContext,
   AssistantResponse,
@@ -13,9 +14,81 @@ import {
   getListingStatus,
 } from './tools/read-tools.ts';
 import { aggregateTasksToday, aggregateRevenue } from './aggregators.ts';
-import { prepareActionPreview } from './tools/action-preview.ts';
 import { handleChatApproval } from './approval-bridge.ts';
 import { enforceServerTruth } from './assertions.ts';
+import { ModelCallGateway } from '../../model-call/gateway.ts';
+import type { ModelCallRequest, RuntimeContext } from '../../model-call/types.ts';
+
+// ---------------------------------------------------------------------------
+// System instruction – tells OpenAI (or fixture) how to generate answers.
+// ---------------------------------------------------------------------------
+const ASSISTANT_SYSTEM_INSTRUCTION =
+  'Bạn là Trợ lý AI Synchro – chuyên gia hỗ trợ quản lý bán hàng đa sàn thương mại điện tử tại Đông Nam Á.\n' +
+  'Luôn trả lời bằng tiếng Việt, ngắn gọn, thân thiện và chuyên nghiệp.\n' +
+  'Chỉ sử dụng dữ liệu thực từ trường "toolData" được cung cấp; không bịa đặt số liệu.\n' +
+  'Khi intent là "batch_publish_guard": giải thích rằng hệ thống không hỗ trợ đăng hàng loạt tự động và yêu cầu xác nhận từng bài.\n' +
+  'Khi intent là "unknown": hướng dẫn người dùng hỏi về doanh thu, công việc hôm nay, hoặc tìm kiếm sản phẩm.\n' +
+  'Output PHẢI là JSON hợp lệ đúng định dạng: {"answer":"<câu trả lời tiếng Việt>"}';
+
+// Module-level gateway – shares cache / budget across all assistant requests.
+const globalAssistantGateway = new ModelCallGateway();
+
+// ---------------------------------------------------------------------------
+// Core helper – calls ModelCallGateway and returns the generated answer string.
+// In demo mode FixtureModelProvider is used; in live mode OpenAI is used.
+// ---------------------------------------------------------------------------
+async function callAssistantAI(
+  context: ServerContext,
+  convId: string,
+  intent: string,
+  toolData: Record<string, unknown>,
+  userMessage: string,
+  remainingMs: number
+): Promise<string> {
+  const inputHash = createHash('sha256')
+    .update(JSON.stringify({ userMessage, intent, toolData, tenantId: context.tenantId }))
+    .digest('hex');
+
+  const runtimeCtx: RuntimeContext = {
+    tenantId: context.tenantId,
+    mode: context.mode,
+    runId: `assist_${convId}`,
+    stepId: `answer_${intent}`,
+    attemptId: 1,
+    deadlineMs: Math.max(remainingMs, 1000),
+  };
+
+  const request: ModelCallRequest<{ answer: string }> = {
+    agentName: 'assistant_agent',
+    promptVersion: 'v1',
+    schemaVersion: '1.0.0',
+    modelConfigId: 'gpt-4o-mini',
+    systemInstruction: ASSISTANT_SYSTEM_INSTRUCTION,
+    userPayload: { userMessage, intent, toolData, userRole: context.role },
+    snapshotRef: { id: convId, version: 1, hash: 'none' },
+    inputHash,
+    maxOutputTokens: 512,
+    validateOutput: (raw: unknown) => {
+      if (
+        raw !== null &&
+        typeof raw === 'object' &&
+        'answer' in raw &&
+        typeof (raw as Record<string, unknown>).answer === 'string'
+      ) {
+        return { valid: true, data: { answer: (raw as Record<string, unknown>).answer as string } };
+      }
+      return { valid: false, errors: ['Trường answer bị thiếu hoặc không phải chuỗi'] };
+    },
+  };
+
+  try {
+    const result = await globalAssistantGateway.callStructuredModel(request, runtimeCtx);
+    return result.artifact.answer;
+  } catch {
+    // Graceful fallback – only reached on total provider failure.
+    return 'Xin lỗi, tôi tạm thời không thể xử lý yêu cầu này. Vui lòng thử lại sau.';
+  }
+}
 
 export interface AssistantRunOptions {
   deadlineMs?: number;
@@ -34,6 +107,7 @@ export async function runAssistant(
   const deadlineMs = typeof options.deadlineMs === 'number' ? options.deadlineMs : 30000;
   const startTime = Date.now();
   const asOf = new Date().toISOString();
+  const remaining = () => deadlineMs - (Date.now() - startTime);
 
   // Initialize or get conversation
   let convId = conversationId;
@@ -56,12 +130,7 @@ export async function runAssistant(
   // Record user message
   globalConversationManager.appendMessage(
     convId,
-    {
-      id: `msg_${Date.now()}_u`,
-      role: 'user',
-      content: message,
-      createdAt: asOf,
-    },
+    { id: `msg_${Date.now()}_u`, role: 'user', content: message, createdAt: asOf },
     context
   );
 
@@ -69,7 +138,7 @@ export async function runAssistant(
   const citations: Citation[] = [];
   const assertions: ServerStructuredAssertion[] = [];
 
-  // Check deadline
+  // Deadline guard
   if (Date.now() - startTime >= deadlineMs || options.signal?.aborted) {
     return {
       conversationId: convId,
@@ -80,7 +149,7 @@ export async function runAssistant(
     };
   }
 
-  // 0. Greeting flow ("xin chào", "chào bạn", "hello", "hi")
+  // 0. Greeting – the only branch with a static hardcoded answer.
   const isGreeting = /^(xin\s+chào|chào|chào\s+bạn|chào\s+bot|chào\s+em|hello|hi|hey)($|\s|[!.,?])/i.test(cleanMsg);
   if (isGreeting) {
     return {
@@ -101,15 +170,12 @@ export async function runAssistant(
     };
   }
 
-  // 1. Approval flow ("đồng ý", "duyệt", "ok duyệt")
+  // 1. Approval flow – structured workflow response, not a business data query.
   if (cleanMsg === 'đồng ý' || cleanMsg === 'duyệt' || cleanMsg === 'xác nhận duyệt' || targetProposalId) {
     const approvalRes = handleChatApproval(context, targetProposalId);
     let status: AssistantResponse['status'] = 'answered';
-    if (approvalRes.status === 'needs_clarification') {
-      status = 'needs_clarification';
-    } else if (approvalRes.status === 'stale_rejected' || approvalRes.status === 'permission_denied') {
-      status = 'unavailable';
-    }
+    if (approvalRes.status === 'needs_clarification') status = 'needs_clarification';
+    else if (approvalRes.status === 'stale_rejected' || approvalRes.status === 'permission_denied') status = 'unavailable';
 
     return {
       conversationId: convId,
@@ -122,23 +188,17 @@ export async function runAssistant(
     };
   }
 
-  // 2. Batch publish protection ("đăng hết đi", "đăng tất cả")
+  // 2. Batch publish protection – AI explains why bulk publish is not supported.
   if (cleanMsg.includes('đăng hết') || cleanMsg.includes('đăng tất cả') || cleanMsg.includes('xuất bản hết')) {
-    const preview = prepareActionPreview(context, {
-      actionType: 'publish_listing',
-      targetIds: ['list_tea_shopee', 'list_coffee_shopee'],
-    });
-
-    return {
-      conversationId: convId,
-      answer: preview.messageVi,
-      citations: preview.citations,
-      status: 'needs_clarification',
-      asOf,
-    };
+    const answer = await callAssistantAI(
+      context, convId, 'batch_publish_guard',
+      { targetListings: ['list_tea_shopee', 'list_coffee_shopee'], constraint: 'require_individual_review' },
+      message, remaining()
+    );
+    return { conversationId: convId, answer, citations: [], status: 'needs_clarification', asOf };
   }
 
-  // 3. Query revenue / orders ("doanh thu", "bán được bao nhiêu đơn")
+  // 3. Revenue – fetch verified data, AI composes the answer.
   if (cleanMsg.includes('doanh thu') || cleanMsg.includes('bán được bao nhiêu') || cleanMsg.includes('tiền')) {
     const revGroups = aggregateRevenue(demoStore.orders);
     assertions.push({
@@ -147,22 +207,17 @@ export async function runAssistant(
       isAuthoritative: true,
     });
 
-    let answer = 'Tình hình doanh thu đơn hàng đã xác nhận:\n';
-    for (const group of revGroups) {
-      answer += `- ${group.totalAmount.toLocaleString()} ${group.currency} (${group.orderCount} đơn hàng)\n`;
-    }
+    const answer = await callAssistantAI(
+      context, convId, 'revenue',
+      { revenueGroups: revGroups },
+      message, remaining()
+    );
 
     return {
       conversationId: convId,
       answer,
       citations: [
-        {
-          recordType: 'order',
-          recordId: 'ord_1001',
-          version: 1,
-          internalUrl: '/dashboard/orders',
-          title: 'Quản lý đơn hàng',
-        },
+        { recordType: 'order', recordId: 'ord_1001', version: 1, internalUrl: '/dashboard/orders', title: 'Quản lý đơn hàng' },
       ],
       status: 'answered',
       asOf,
@@ -170,7 +225,7 @@ export async function runAssistant(
     };
   }
 
-  // 4. Query tasks today ("hôm nay còn việc gì", "việc cần làm")
+  // 4. Tasks today – fetch verified data, AI composes the answer.
   if (cleanMsg.includes('việc') || cleanMsg.includes('công việc') || cleanMsg.includes('hôm nay')) {
     const tasksAgg = aggregateTasksToday(demoStore.tasks, context.userTimezone);
     const tasksTool = listPendingTasks(context, { limit: 5 });
@@ -182,12 +237,18 @@ export async function runAssistant(
       isAuthoritative: true,
     });
 
-    let answer = `Hôm nay doanh nghiệp của bạn có ${tasksAgg.totalPendingInDb} công việc đang chờ xử lý (${tasksAgg.tasksCreatedToday} việc phát sinh trong ngày theo múi giờ ${context.userTimezone}).\n\nCác việc ưu tiên:\n`;
-    for (const task of tasksTool.data.tasks) {
-      answer += `- ${task.title} (Mã: #${task.id})\n`;
-    }
+    const rawAnswer = await callAssistantAI(
+      context, convId, 'tasks_today',
+      {
+        totalPendingInDb: tasksAgg.totalPendingInDb,
+        tasksCreatedToday: tasksAgg.tasksCreatedToday,
+        tasks: tasksTool.data.tasks,
+        timezone: context.userTimezone,
+      },
+      message, remaining()
+    );
 
-    const truthful = enforceServerTruth(answer, citations, assertions);
+    const truthful = enforceServerTruth(rawAnswer, citations, assertions);
     return {
       conversationId: convId,
       answer: truthful.truthfulAnswer,
@@ -198,44 +259,47 @@ export async function runAssistant(
     };
   }
 
-
-  // 5. Query order issue ("sự cố đơn", "khách hàng", "đơn ord_1001")
+  // 5. Order issue – fetch verified data, AI composes the answer.
   if (cleanMsg.includes('ord_1001') || cleanMsg.includes('sự cố đơn')) {
     const orderRes = getOrderIssue(context, { orderId: 'ord_1001' });
     if (!orderRes.data) {
-      return {
-        conversationId: convId,
-        answer: 'Không tìm thấy thông tin sự cố cho đơn hàng này.',
-        citations: [],
-        status: 'answered',
-        asOf,
-      };
+      const answer = await callAssistantAI(
+        context, convId, 'order_not_found', {}, message, remaining()
+      );
+      return { conversationId: convId, answer, citations: [], status: 'answered', asOf };
     }
 
     citations.push(...orderRes.citations);
     const d = orderRes.data;
-    let answer = `Đơn hàng #${d.id} có trạng thái ${d.status}. Ghi chú: ${d.issueDescription || 'Không có'}.\n`;
+    const orderData: Record<string, unknown> = {
+      id: d.id,
+      status: d.status,
+      issueDescription: d.issueDescription ?? null,
+    };
+    // PII already stripped by getOrderIssue according to caller's role.
     if (d.customerPhone) {
-      answer += `Thông tin liên hệ khách hàng: ${d.customerName} - ${d.customerPhone} (Địa chỉ: ${d.shippingAddress})`;
+      orderData.customerName = d.customerName;
+      orderData.customerPhone = d.customerPhone;
+      orderData.shippingAddress = d.shippingAddress;
     } else {
-      answer += `(Thông tin khách hàng đã được ẩn theo quyền người xem Viewer của bạn)`;
+      orderData.piiRedacted = true;
     }
 
-    return {
-      conversationId: convId,
-      answer,
-      citations,
-      status: 'answered',
-      asOf,
-    };
+    const answer = await callAssistantAI(
+      context, convId, 'order_issue',
+      { order: orderData },
+      message, remaining()
+    );
+    return { conversationId: convId, answer, citations, status: 'answered', asOf };
   }
 
-  // 6. Search for listing/product by name ("trà ô long", "cà phê")
+  // 6. Catalog / listing search – fetch verified data, AI composes the answer.
   const searchRes = searchCatalogOrTasks(context, { query: message, limit: 3 });
   if (searchRes.data.length > 0) {
     citations.push(...searchRes.citations);
 
     const firstMatch = searchRes.data[0];
+    let listingDetail: Record<string, unknown> = {};
     if (firstMatch.type === 'listing') {
       const listingRes = getListingStatus(context, { listingId: firstMatch.id });
       if (listingRes.data) {
@@ -244,42 +308,38 @@ export async function runAssistant(
           verifiedData: { status: listingRes.data.status, store: listingRes.data.store },
           isAuthoritative: true,
         });
-
-        // Test truthful assertion enforcement: simulate potential false phrasing
-        let rawAnswer = `Bài đăng ${listingRes.data.title} trên ${listingRes.data.store} đang ở trạng thái ${listingRes.data.status}.`;
-        if (cleanMsg.includes('đã đăng chưa') && listingRes.data.status === 'queued') {
-          rawAnswer = `Bài đăng ${listingRes.data.title} trên ${listingRes.data.store} đang trong hàng đợi chờ gửi (chưa hoàn tất đăng trên sàn). Cập nhật mới nhất lúc ${asOf}.`;
-        }
-
-        const truthful = enforceServerTruth(rawAnswer, citations, assertions);
-        return {
-          conversationId: convId,
-          answer: truthful.truthfulAnswer,
-          citations: truthful.verifiedCitations,
-          status: 'answered',
-          asOf,
-          structuredAssertions: assertions,
+        listingDetail = {
+          title: listingRes.data.title,
+          store: listingRes.data.store,
+          // Provide truthful status wording so enforceServerTruth can validate.
+          status: cleanMsg.includes('đã đăng chưa') && listingRes.data.status === 'queued'
+            ? 'đang trong hàng đợi chờ gửi (chưa hoàn tất đăng trên sàn)'
+            : listingRes.data.status,
         };
       }
     }
 
+    const rawAnswer = await callAssistantAI(
+      context, convId, 'search',
+      { results: searchRes.data, listingDetail, query: message },
+      message, remaining()
+    );
+
+    const truthful = enforceServerTruth(rawAnswer, citations, assertions);
     return {
       conversationId: convId,
-      answer: `Tìm thấy ${searchRes.data.length} kết quả liên quan đến câu hỏi của bạn:\n` +
-        searchRes.data.map((item) => `- ${item.title} (${item.type})`).join('\n'),
-      citations,
+      answer: truthful.truthfulAnswer,
+      citations: truthful.verifiedCitations,
       status: 'answered',
       asOf,
+      structuredAssertions: assertions.length > 0 ? assertions : undefined,
     };
   }
 
-  // Fallback: Needs clarification
-  return {
-    conversationId: convId,
-    answer:
-      'Tôi chưa hiểu rõ câu hỏi của bạn. Bạn có thể hỏi về: "Hôm nay còn việc gì cần làm?", "Doanh thu hôm nay thế nào?", hoặc tìm kiếm tên sản phẩm cụ thể.',
-    citations: [],
-    status: 'needs_clarification',
-    asOf,
-  };
+  // 7. Fallback – AI provides helpful guidance rather than a static error string.
+  const fallbackAnswer = await callAssistantAI(
+    context, convId, 'unknown', {}, message, remaining()
+  );
+  return { conversationId: convId, answer: fallbackAnswer, citations: [], status: 'needs_clarification', asOf };
 }
+

@@ -23,7 +23,10 @@ export async function POST(req: Request) {
     const tenantId = req.headers.get('x-tenant-id') || 'tenant_vietnam';
     const userId = req.headers.get('x-user-id') || 'user_demo_1';
     const role = (req.headers.get('x-user-role') || 'admin') as UserRole;
-    const mode = (req.headers.get('x-mode') || 'demo') as 'live' | 'demo';
+    // Default to live mode when an API key is configured so the browser gets real AI answers.
+    // Tests call runAssistant directly with mode: 'demo' and still use the fixture provider.
+    const defaultMode = process.env.OPENAI_API_KEY ? 'live' : 'demo';
+    const mode = (req.headers.get('x-mode') || defaultMode) as 'live' | 'demo';
     const userTimezone = req.headers.get('x-timezone') || 'Asia/Ho_Chi_Minh';
 
     const serverContext: ServerContext = {

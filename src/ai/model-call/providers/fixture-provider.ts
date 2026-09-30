@@ -122,6 +122,79 @@ export class FixtureModelProvider implements IModelProvider {
       };
     }
 
+    if (request.agentName === 'assistant_agent') {
+      const p = request.userPayload as {
+        intent?: string;
+        toolData?: Record<string, unknown>;
+        userMessage?: string;
+      };
+      const intent = p.intent ?? 'unknown';
+      const toolData = p.toolData ?? {};
+
+      let answer: string;
+      switch (intent) {
+        case 'batch_publish_guard':
+          answer =
+            'Hệ thống không hỗ trợ đăng hàng loạt tự động để đảm bảo kiểm soát chất lượng. ' +
+            'Vui lòng duyệt và xuất bản từng bài đăng thủ công qua trang Quản lý Bài đăng.';
+          break;
+        case 'revenue': {
+          const groups =
+            (toolData.revenueGroups as Array<{ totalAmount: number; currency: string; orderCount: number }>) ?? [];
+          const summary = groups
+            .map((g) => `${g.totalAmount.toLocaleString('vi-VN')} ${g.currency} (${g.orderCount} đơn)`)
+            .join('; ');
+          answer = `Doanh thu đã xác nhận: ${summary || '0 VND'}. Xem chi tiết tại trang Đơn hàng.`;
+          break;
+        }
+        case 'tasks_today': {
+          const total = (toolData.totalPendingInDb as number) ?? 0;
+          const today = (toolData.tasksCreatedToday as number) ?? 0;
+          answer =
+            `Hôm nay doanh nghiệp có ${total} công việc đang chờ xử lý (${today} việc phát sinh trong ngày). ` +
+            'Truy cập trang Việc cần duyệt để xử lý.';
+          break;
+        }
+        case 'order_issue': {
+          const order = toolData.order as Record<string, unknown> | undefined;
+          if (order) {
+            const piiRedacted = Boolean(order.piiRedacted);
+            answer =
+              `Đơn hàng #${order.id} đang ở trạng thái ${order.status}. ` +
+              `Ghi chú: ${order.issueDescription ?? 'Không có'}.` +
+              (piiRedacted
+                ? ' (Thông tin khách hàng đã được ẩn theo quyền Viewer)'
+                : ` Liên hệ: ${order.customerName} – ${order.customerPhone}.`);
+          } else {
+            answer = 'Không tìm thấy thông tin đơn hàng này.';
+          }
+          break;
+        }
+        case 'order_not_found':
+          answer = 'Không tìm thấy thông tin sự cố cho đơn hàng này.';
+          break;
+        case 'search': {
+          const results = (toolData.results as Array<{ title: string; type: string }>) ?? [];
+          const listingDetail = toolData.listingDetail as Record<string, unknown> | undefined;
+          if (listingDetail && Object.keys(listingDetail).length > 0) {
+            answer = `Bài đăng ${listingDetail.title} trên ${listingDetail.store} đang ở trạng thái ${listingDetail.status}.`;
+          } else {
+            answer = `Tìm thấy ${results.length} kết quả: ${results.map((r) => r.title).join(', ')}.`;
+          }
+          break;
+        }
+        default:
+          answer =
+            'Tôi chưa tìm được câu trả lời phù hợp. Bạn có thể hỏi về doanh thu, công việc hôm nay, hoặc tìm kiếm tên sản phẩm cụ thể.';
+      }
+
+      return {
+        rawJson: { answer },
+        usage: { inputTokens: 60, outputTokens: 40, estimatedCostUsd: 0.0 },
+        providerRequestId: `fixture_assistant_${Date.now()}`,
+      };
+    }
+
     const rawJson = {
       title: `[Demo] ${request.userPayload.title || 'Sản phẩm mẫu'} - Tối ưu Shopee chuẩn SEO`,
       description: `[Demo] Mô tả tối ưu hóa tự động cho ${request.userPayload.title || 'sản phẩm'}. Đầy đủ công dụng, thành phần, và hướng dẫn sử dụng.`,
