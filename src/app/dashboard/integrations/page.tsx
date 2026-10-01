@@ -1,76 +1,154 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import styles from "./page.module.css";
+import type { ChannelConnection } from "@/services/marketplace/types.ts";
+
+interface PlatformDisplay {
+  id: string;
+  name: string;
+  platform: 'shopee' | 'tiktok' | 'lazada';
+  icon: string;
+  status: 'connected' | 'disconnected' | 'error';
+  shopName: string;
+  shopId: string;
+  lastSync: string;
+}
+
+const DEFAULT_PLATFORMS: PlatformDisplay[] = [
+  {
+    id: "shopee",
+    name: "Shopee",
+    platform: "shopee",
+    icon: "🛒",
+    status: "connected",
+    shopName: "Official Shopee Mall VN",
+    shopId: "shp_893452142",
+    lastSync: "Vừa xong"
+  },
+  {
+    id: "tiktok",
+    name: "TikTok Shop",
+    platform: "tiktok",
+    icon: "🎵",
+    status: "connected",
+    shopName: "Synchro TikTok Shop",
+    shopId: "tt_77192348",
+    lastSync: "5 phút trước"
+  },
+  {
+    id: "lazada",
+    name: "Lazada",
+    platform: "lazada",
+    icon: "🛍️",
+    status: "disconnected",
+    shopName: "---",
+    shopId: "---",
+    lastSync: "Chưa kết nối"
+  }
+];
 
 export default function IntegrationsPage() {
+  const [platforms, setPlatforms] = useState<PlatformDisplay[]>(DEFAULT_PLATFORMS);
+  const [selectedPlatform, setSelectedPlatform] = useState<PlatformDisplay | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [isScanning, setIsScanning] = useState(false);
   const [scanLogs, setScanLogs] = useState<string[]>([]);
-  const [selectedPlatform, setSelectedPlatform] = useState<any>(null);
-  
-  const [platforms, setPlatforms] = useState([
-    {
-      id: 1,
-      name: "Shopee",
-      icon: "🛍️",
-      status: "connected",
-      shopName: "Tech Startup VN",
-      lastSync: "Vừa xong",
-      color: "#f97316"
-    },
-    {
-      id: 2,
-      name: "TikTok Shop",
-      icon: "🎵",
-      status: "disconnected",
-      shopName: "---",
-      lastSync: "---",
-      color: "#000000"
-    },
-    {
-      id: 3,
-      name: "Lazada",
-      icon: "💙",
-      status: "disconnected",
-      shopName: "---",
-      lastSync: "---",
-      color: "#3b82f6"
-    }
-  ]);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
 
+  /**
+   * Fetch connected channels from backend API on mount
+   */
+  useEffect(() => {
+    async function loadChannels() {
+      try {
+        const res = await fetch('/api/marketplace/channels');
+        const json = await res.json();
+        if (json.success && Array.isArray(json.channels)) {
+          setPlatforms(prev => prev.map(p => {
+            const matched = json.channels.find((c: ChannelConnection) => c.platform === p.platform);
+            if (matched) {
+              return {
+                ...p,
+                status: matched.status,
+                shopName: matched.shopName,
+                shopId: matched.shopId,
+                lastSync: matched.lastSyncAt ? new Date(matched.lastSyncAt).toLocaleTimeString('vi-VN') : p.lastSync
+              };
+            }
+            return p;
+          }));
+        }
+      } catch (err) {
+        console.warn('Could not load dynamic channel states:', err);
+      }
+    }
+    loadChannels();
+  }, []);
+
+  /**
+   * Connect or reconfigure channel via backend API
+   */
+  const handleConnectChannel = async (platform: PlatformDisplay) => {
+    try {
+      const res = await fetch('/api/marketplace/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: platform.platform,
+          shopName: platform.shopName === '---' ? `Shop ${platform.name} Mall` : platform.shopName,
+          shopId: `shop_${Date.now()}`
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPlatforms(prev => prev.map(p => p.id === platform.id ? {
+          ...p,
+          status: 'connected',
+          shopName: data.channel.shopName,
+          shopId: data.channel.shopId,
+          lastSync: 'Vừa xong'
+        } : p));
+        setSyncStatusMessage(`Đã kết nối thành công ${platform.name}!`);
+        setSelectedPlatform(null);
+      }
+    } catch (err) {
+      console.error('Channel connect failed:', err);
+    }
+  };
+
+  /**
+   * AI Auto-Connect handler simulation
+   */
   const handleAutoConnect = async () => {
     if (!inputValue) return;
-    
     setIsScanning(true);
     setScanLogs([]);
-    
-    // Simulate AI scanning and processing
-    const logs = [
-      "Khởi tạo AI Copilot Connection...",
-      "Đang phân tích cú pháp chuỗi đầu vào...",
-      "Phát hiện định dạng: TikTok Shop API Token (Phiên bản 2.0)",
-      "Trích xuất Merchant ID: 893***142",
-      "Đang thiết lập kênh giao tiếp an toàn (SSL/TLS)...",
-      "Xác thực Token với máy chủ TikTok...",
-      "Thành công! Đang ánh xạ danh mục và cấu hình tồn kho..."
-    ];
 
-    for (let i = 0; i < logs.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setScanLogs(prev => [...prev, logs[i]]);
+    const addLog = (msg: string) => {
+      setScanLogs(prev => [...prev, msg]);
+    };
+
+    addLog("Đang đọc và phân tích thông tin xác thực...");
+    await new Promise(r => setTimeout(r, 600));
+
+    addLog("Kiểm tra định dạng OAuth Token / API Key...");
+    await new Promise(r => setTimeout(r, 800));
+
+    addLog("Gửi yêu cầu xác thực tới máy chủ đối tác (RESTful OAuth)...");
+    await new Promise(r => setTimeout(r, 1000));
+
+    const detected = inputValue.toLowerCase().includes("shopee") ? "shopee" : "tiktok";
+    const detectedName = detected === "shopee" ? "Shopee" : "TikTok Shop";
+
+    addLog(`Nhận diện thành công: ${detectedName}! Đang lưu chứng thực mã hóa an toàn.`);
+    await new Promise(r => setTimeout(r, 600));
+
+    const target = platforms.find(p => p.id === detected);
+    if (target) {
+      await handleConnectChannel(target);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Update TikTok status to connected
-    setPlatforms(prev => prev.map(p => {
-      if (p.name === "TikTok Shop") {
-        return { ...p, status: "connected", shopName: "Tech Startup TikTok", lastSync: "Vừa xong" };
-      }
-      return p;
-    }));
-    
     setIsScanning(false);
     setInputValue("");
   };
@@ -81,6 +159,13 @@ export default function IntegrationsPage() {
         <h1 className={styles.title}>Kết nối Sàn (Integrations)</h1>
         <p className={styles.subtitle}>Quản lý kết nối các gian hàng thương mại điện tử bằng AI Copilot.</p>
       </div>
+
+      {syncStatusMessage && (
+        <div style={{ background: '#064e3b', color: '#6ee7b7', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>✓ {syncStatusMessage}</span>
+          <button onClick={() => setSyncStatusMessage(null)} style={{ background: 'transparent', border: 'none', color: '#6ee7b7', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
 
       <div className={styles.aiSection}>
         <div>
@@ -111,12 +196,12 @@ export default function IntegrationsPage() {
         {(isScanning || scanLogs.length > 0) && (
           <div className={styles.scannerBox}>
             {scanLogs.map((log, index) => (
-              <div key={index} className={styles.scanLine} style={{ animationDelay: '0s' }}>
+              <div key={index} className={styles.scanLine}>
                 <span style={{ color: '#10b981' }}>{'>'}</span> {log}
               </div>
             ))}
             {isScanning && (
-              <div className={styles.scanLine} style={{ animation: 'pulse 1s infinite' }}>
+              <div className={styles.scanLine}>
                 <span style={{ color: '#10b981' }}>{'>'}</span> <span style={{ width: '8px', height: '14px', background: '#38bdf8', display: 'inline-block' }}></span>
               </div>
             )}
@@ -200,12 +285,12 @@ export default function IntegrationsPage() {
               </div>
               <div className={styles.itemRow} style={{ borderBottom: 'none', padding: '4px 0' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>ID Cửa hàng:</span>
-                <strong>{selectedPlatform.status === 'connected' ? '893452142' : '---'}</strong>
+                <strong>{selectedPlatform.shopId}</strong>
               </div>
             </div>
 
             <div className={styles.detailSection}>
-              <div className={styles.detailLabel}>Tùy chọn đồng bộ</div>
+              <div className={styles.detailLabel}>Tùy chọn đồng bộ RESTful API</div>
               <div style={{ background: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border-color)', padding: '16px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', cursor: 'pointer' }}>
                   <input type="checkbox" defaultChecked />
@@ -213,19 +298,19 @@ export default function IntegrationsPage() {
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', cursor: 'pointer' }}>
                   <input type="checkbox" defaultChecked />
-                  <span style={{ fontSize: '14px', fontWeight: 500 }}>Đồng bộ Đơn hàng theo thời gian thực</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                  <input type="checkbox" defaultChecked={false} />
-                  <span style={{ fontSize: '14px', fontWeight: 500 }}>Gửi tin nhắn tự động chăm sóc KH</span>
+                  <span style={{ fontSize: '14px', fontWeight: 500 }}>Đồng bộ Đơn hàng theo thời gian thực (RESTful Hook)</span>
                 </label>
               </div>
             </div>
             
             <div style={{ marginTop: 'auto', display: 'flex', gap: '12px' }}>
               <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setSelectedPlatform(null)}>Đóng</button>
-              <button className="btn btn-primary" style={{ flex: 1 }}>
-                {selectedPlatform.status === 'connected' ? 'Cập nhật cấu hình' : 'Bắt đầu kết nối'}
+              <button 
+                className="btn btn-primary" 
+                style={{ flex: 1 }}
+                onClick={() => handleConnectChannel(selectedPlatform)}
+              >
+                {selectedPlatform.status === 'connected' ? 'Lưu cấu hình' : 'Bắt đầu kết nối'}
               </button>
             </div>
           </div>

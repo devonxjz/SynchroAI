@@ -26,7 +26,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   docker-build:
@@ -37,6 +36,14 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Resolve Lowercase Docker Package Name
+        id: prep
+        run: |
+          # Docker/OCI specification mandates that repository and package names must be strictly lowercase
+          LOWER_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=${{ env.REGISTRY }}/${LOWER_REPO}" >> $GITHUB_OUTPUT
+          echo "Resolved Docker package target: ${{ env.REGISTRY }}/${LOWER_REPO}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -52,7 +59,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.prep.outputs.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -65,14 +72,14 @@ jobs:
         with:
           context: .
           load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan-cache
+          tags: ${{ steps.prep.outputs.image }}:scan-cache
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Scan Docker Image CVEs (Trivy)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan-cache
+          image-ref: ${{ steps.prep.outputs.image }}:scan-cache
           format: 'table'
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
@@ -91,5 +98,5 @@ jobs:
       - name: Export Image URI
         id: export-uri
         run: |
-          IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}"
+          IMAGE_URI="${{ steps.prep.outputs.image }}:sha-${GITHUB_SHA::7}"
           echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
