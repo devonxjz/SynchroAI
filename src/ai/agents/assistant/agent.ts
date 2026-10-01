@@ -45,10 +45,16 @@ async function callAssistantAI(
   intent: string,
   toolData: Record<string, unknown>,
   userMessage: string,
-  remainingMs: number
+  remainingMs: number,
+  gateway?: ModelCallGateway,
+  history?: unknown[]
 ): Promise<string> {
+  const payloadToHash: Record<string, unknown> = { userMessage, intent, toolData, tenantId: context.tenantId };
+  if (history && history.length > 0) {
+    payloadToHash.history = history;
+  }
   const inputHash = createHash('sha256')
-    .update(JSON.stringify({ userMessage, intent, toolData, tenantId: context.tenantId }))
+    .update(JSON.stringify(payloadToHash))
     .digest('hex');
 
   const runtimeCtx: RuntimeContext = {
@@ -60,13 +66,23 @@ async function callAssistantAI(
     deadlineMs: Math.max(remainingMs, 1000),
   };
 
+  const userPayload: Record<string, unknown> = {
+    userMessage,
+    intent,
+    toolData,
+    userRole: context.role,
+  };
+  if (history && history.length > 0) {
+    userPayload.history = history;
+  }
+
   const request: ModelCallRequest<{ answer: string }> = {
     agentName: 'assistant_agent',
     promptVersion: 'v1',
     schemaVersion: '1.0.0',
     modelConfigId: 'gpt-4o-mini',
     systemInstruction: ASSISTANT_SYSTEM_INSTRUCTION,
-    userPayload: { userMessage, intent, toolData, userRole: context.role },
+    userPayload,
     snapshotRef: { id: convId, version: 1, hash: 'none' },
     inputHash,
     maxOutputTokens: 512,
@@ -83,8 +99,9 @@ async function callAssistantAI(
     },
   };
 
+  const effectiveGateway = gateway || globalAssistantGateway;
   try {
-    const result = await globalAssistantGateway.callStructuredModel(request, runtimeCtx);
+    const result = await effectiveGateway.callStructuredModel(request, runtimeCtx);
     return result.artifact.answer;
   } catch {
     // Graceful fallback – only reached on total provider failure.
@@ -97,6 +114,7 @@ export interface AssistantRunOptions {
   maxToolCalls?: number;
   maxModelCalls?: number;
   signal?: AbortSignal;
+  gateway?: ModelCallGateway;
 }
 
 export async function runAssistant(
@@ -129,6 +147,9 @@ export async function runAssistant(
     }
   }
 
+  // Retrieve prior sanitized history before recording current turn
+  const priorHistory = globalConversationManager.getSanitizedHistory(convId, context);
+
   // Record user message
   globalConversationManager.appendMessage(
     convId,
@@ -136,25 +157,39 @@ export async function runAssistant(
     context
   );
 
+  const sendRes = (res: AssistantResponse): AssistantResponse => {
+    globalConversationManager.appendMessage(
+      convId,
+      {
+        id: `msg_${Date.now()}_a`,
+        role: 'assistant',
+        content: res.answer,
+        createdAt: new Date().toISOString(),
+      },
+      context
+    );
+    return res;
+  };
+
   const cleanMsg = message.toLowerCase().trim();
   const citations: Citation[] = [];
   const assertions: ServerStructuredAssertion[] = [];
 
   // Deadline guard
   if (Date.now() - startTime >= deadlineMs || options.signal?.aborted) {
-    return {
+    return sendRes({
       conversationId: convId,
       answer: 'Thời gian xử lý vượt quá giới hạn 30 giây của yêu cầu.',
       citations: [],
       status: 'partial_deadline_exceeded',
       asOf,
-    };
+    });
   }
 
   // 0. Greeting – the only branch with a static hardcoded answer.
   const isGreeting = /^(xin\s+chào|chào|chào\s+bạn|chào\s+bot|chào\s+em|hello|hi|hey)($|\s|[!.,?])/i.test(cleanMsg);
   if (isGreeting) {
-    return {
+    return sendRes({
       conversationId: convId,
       answer:
         'Xin chào bạn! Tôi là Trợ lý AI đồng hành quản lý bán hàng đa sàn. Tôi có thể hỗ trợ bạn kiểm tra việc cần xử lý hôm nay, thống kê doanh thu, tra cứu tình trạng đơn hàng hoặc tiếp nhận quy cách sản phẩm mới để khởi tạo bài đăng. Bạn cần hỗ trợ gì hôm nay?',
@@ -169,7 +204,7 @@ export async function runAssistant(
       ],
       status: 'answered',
       asOf,
-    };
+    });
   }
 
   // 1. Approval flow – structured workflow response, not a business data query.
@@ -179,7 +214,7 @@ export async function runAssistant(
     if (approvalRes.status === 'needs_clarification') status = 'needs_clarification';
     else if (approvalRes.status === 'stale_rejected' || approvalRes.status === 'permission_denied') status = 'unavailable';
 
-    return {
+    return sendRes({
       conversationId: convId,
       answer: approvalRes.messageVi,
       citations: [],
@@ -187,7 +222,7 @@ export async function runAssistant(
       status,
       asOf,
       clarificationOptions: approvalRes.pendingProposals,
-    };
+    });
   }
 
   // 2a-i. Listing content paste – user pastes a pre-generated listing (Tiêu đề + Mô tả + Từ khóa).
@@ -202,13 +237,12 @@ export async function runAssistant(
     const answer = await callAssistantAI(
       context, convId, 'listing_confirm',
       { extractedTitle, charCount: message.length },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
-    return { conversationId: convId, answer, citations: [], status: 'preview_ready', asOf };
+    return sendRes({ conversationId: convId, answer, citations: [], status: 'preview_ready', asOf });
   }
 
   // 2a-ii. Prepare listing – user asks AI to generate a product listing on the spot.
-
   const prepareListingMatch = /tạo\s*bài\s*đăng|soạn\s*bài|viết\s*mô\s*tả|tạo\s*sản\s*phẩm|khởi\s*tạo\s*bài/i.exec(cleanMsg);
   if (prepareListingMatch) {
     // Extract product name: everything after the matched verb phrase.
@@ -217,9 +251,9 @@ export async function runAssistant(
     const answer = await callAssistantAI(
       context, convId, 'prepare_listing',
       { productName, store: 'Shopee VN' },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
-    return { conversationId: convId, answer, citations: [], status: 'answered', asOf };
+    return sendRes({ conversationId: convId, answer, citations: [], status: 'answered', asOf });
   }
 
   // 2b. Batch publish protection – AI explains why bulk publish is not supported.
@@ -227,9 +261,9 @@ export async function runAssistant(
     const answer = await callAssistantAI(
       context, convId, 'batch_publish_guard',
       { targetListings: ['list_tea_shopee', 'list_coffee_shopee'], constraint: 'require_individual_review' },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
-    return { conversationId: convId, answer, citations: [], status: 'needs_clarification', asOf };
+    return sendRes({ conversationId: convId, answer, citations: [], status: 'needs_clarification', asOf });
   }
 
   // 3. Revenue – fetch verified data, AI composes the answer.
@@ -244,10 +278,10 @@ export async function runAssistant(
     const answer = await callAssistantAI(
       context, convId, 'revenue',
       { revenueGroups: revGroups },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
 
-    return {
+    return sendRes({
       conversationId: convId,
       answer,
       citations: [
@@ -256,7 +290,7 @@ export async function runAssistant(
       status: 'answered',
       asOf,
       structuredAssertions: assertions,
-    };
+    });
   }
 
   // 4. Tasks today – fetch verified data, AI composes the answer.
@@ -279,18 +313,18 @@ export async function runAssistant(
         tasks: tasksTool.data.tasks,
         timezone: context.userTimezone,
       },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
 
     const truthful = enforceServerTruth(rawAnswer, citations, assertions);
-    return {
+    return sendRes({
       conversationId: convId,
       answer: truthful.truthfulAnswer,
       citations: truthful.verifiedCitations,
       status: 'answered',
       asOf,
       structuredAssertions: assertions,
-    };
+    });
   }
 
   // 5. Order issue – fetch verified data, AI composes the answer.
@@ -298,9 +332,9 @@ export async function runAssistant(
     const orderRes = getOrderIssue(context, { orderId: 'ord_1001' });
     if (!orderRes.data) {
       const answer = await callAssistantAI(
-        context, convId, 'order_not_found', {}, message, remaining()
+        context, convId, 'order_not_found', {}, message, remaining(), options.gateway, priorHistory
       );
-      return { conversationId: convId, answer, citations: [], status: 'answered', asOf };
+      return sendRes({ conversationId: convId, answer, citations: [], status: 'answered', asOf });
     }
 
     citations.push(...orderRes.citations);
@@ -322,9 +356,9 @@ export async function runAssistant(
     const answer = await callAssistantAI(
       context, convId, 'order_issue',
       { order: orderData },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
-    return { conversationId: convId, answer, citations, status: 'answered', asOf };
+    return sendRes({ conversationId: convId, answer, citations, status: 'answered', asOf });
   }
 
   // 6. Catalog / listing search – fetch verified data, AI composes the answer.
@@ -356,24 +390,24 @@ export async function runAssistant(
     const rawAnswer = await callAssistantAI(
       context, convId, 'search',
       { results: searchRes.data, listingDetail, query: message },
-      message, remaining()
+      message, remaining(), options.gateway, priorHistory
     );
 
     const truthful = enforceServerTruth(rawAnswer, citations, assertions);
-    return {
+    return sendRes({
       conversationId: convId,
       answer: truthful.truthfulAnswer,
       citations: truthful.verifiedCitations,
       status: 'answered',
       asOf,
       structuredAssertions: assertions.length > 0 ? assertions : undefined,
-    };
+    });
   }
 
   // 7. Fallback – AI provides helpful guidance rather than a static error string.
   const fallbackAnswer = await callAssistantAI(
-    context, convId, 'open_qa', { userQuestion: message }, message, remaining()
+    context, convId, 'open_qa', { userQuestion: message }, message, remaining(), options.gateway, priorHistory
   );
-  return { conversationId: convId, answer: fallbackAnswer, citations: [], status: 'needs_clarification', asOf };
+  return sendRes({ conversationId: convId, answer: fallbackAnswer, citations: [], status: 'needs_clarification', asOf });
 }
 

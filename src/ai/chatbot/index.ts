@@ -5,3 +5,6 @@ export * from './vector-store.ts';
 export * from './context-manager.ts';
 export * from './rag.ts';
 export * from './dispatcher.ts';
+export * from './router.ts';
+export * from './intake-handler.ts';
+

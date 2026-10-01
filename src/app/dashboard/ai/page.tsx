@@ -3,6 +3,9 @@
 import styles from "./page.module.css";
 import { useState } from "react";
 
+// Single unified endpoint for chatbot turns
+const CHAT_MESSAGE_ENDPOINT = '/api/chatbot/message';
+
 interface DraftCard {
   draftId: string;
   version: number;
@@ -37,7 +40,7 @@ export default function AICopilotPage() {
   const [showDocInput, setShowDocInput] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activationStatus, setActivationStatus] = useState<string | null>(null);
-  // Track conversation IDs separately – intake and assistant use different session stores.
+  // Track conversation IDs for session state
   const [assistantConvId, setAssistantConvId] = useState<string | undefined>(undefined);
   const [intakeConvId, setIntakeConvId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -54,10 +57,7 @@ export default function AICopilotPage() {
           internalUrl: "/dashboard/tasks",
         },
       ],
-      longTermMemories: [
-        { key: "default_store", value: "Shopee VN" },
-        { key: "packaging_pref", value: "Đóng gói 250g / 500g" },
-      ],
+      longTermMemories: [],
     },
   ]);
 
@@ -85,30 +85,18 @@ export default function AICopilotPage() {
     const idempotencyKey = generateClientKey('req');
 
     try {
-      // Only route to intake when the user has pasted an actual document (RAG ingestion).
-      // Plain text messages — including "Tạo bài đăng X" — go to the assistant endpoint
-      // so OpenAI generates the answer directly in chat without a workflow activation step.
-      const isIntakeRequest = Boolean(docText);
-      const endpoint = isIntakeRequest ? "/api/chatbot/intake" : "/api/assistant/messages";
+      const payload = {
+        message: text,
+        documentText: docText || undefined,
+        conversationId: assistantConvId || intakeConvId,
+        idempotencyKey,
+        targetProposalId,
+        store: "Shopee VN",
+        targetLocale: "vi",
+        intent: "prepare_listing",
+      };
 
-      const payload = isIntakeRequest
-        ? {
-            message: text,
-            documentText: docText,
-            conversationId: intakeConvId,
-            idempotencyKey,
-            store: "Shopee VN",
-            targetLocale: "vi",
-            intent: "prepare_listing",
-          }
-        : {
-            message: text,
-            idempotencyKey,
-            conversationId: assistantConvId,
-            targetProposalId,
-          };
-
-      const res = await fetch(endpoint, {
+      const res = await fetch(CHAT_MESSAGE_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -119,10 +107,12 @@ export default function AICopilotPage() {
       }
 
       const data = await res.json();
-      if (isIntakeRequest && data.conversationId) {
-        setIntakeConvId(data.conversationId);
-      } else if (!isIntakeRequest && data.conversationId) {
-        setAssistantConvId(data.conversationId);
+      if (data.conversationId) {
+        if (data.draft) {
+          setIntakeConvId(data.conversationId);
+        } else {
+          setAssistantConvId(data.conversationId);
+        }
       }
 
       let returnedDraft: DraftCard | undefined;

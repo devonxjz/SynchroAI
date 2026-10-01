@@ -228,6 +228,23 @@ export class FixtureModelProvider implements IModelProvider {
       };
     }
 
+    if (request.agentName === 'intake_answer') {
+      const p = request.userPayload as Record<string, unknown>;
+      let title = (p.title as string) || '';
+      if (!title && typeof p.formattedContext === 'string') {
+        const titleMatch = p.formattedContext.match(/(?:tên sản phẩm|tiêu đề):\s*([^\n.,;]+)/i);
+        if (titleMatch) title = titleMatch[1].trim();
+      }
+      if (!title) title = 'Sản phẩm mới';
+
+      const answer = `Đã tiếp nhận và phân tích thông tin sản phẩm "${title}". Bản nháp nhiệm vụ đã sẵn sàng xem trước và kích hoạt.`;
+      return {
+        rawJson: { answer },
+        usage: { inputTokens: 80, outputTokens: 50, estimatedCostUsd: 0.0 },
+        providerRequestId: `fixture_intake_${Date.now()}`,
+      };
+    }
+
     const rawJson = {
       title: `[Demo] ${request.userPayload.title || 'Sản phẩm mẫu'} - Tối ưu Shopee chuẩn SEO`,
       description: `[Demo] Mô tả tối ưu hóa tự động cho ${request.userPayload.title || 'sản phẩm'}. Đầy đủ công dụng, thành phần, và hướng dẫn sử dụng.`,

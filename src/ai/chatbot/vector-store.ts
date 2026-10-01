@@ -82,7 +82,7 @@ export class TenantIsolatedVectorStore {
           recordType: 'product',
           recordId: record.documentId,
           version: record.version,
-          internalUrl: `/dashboard/catalog/${record.documentId}#chunk-${record.chunkId}`,
+          internalUrl: `/dashboard/products/${record.documentId}#chunk-${record.chunkId}`,
           title: (record.metadata?.title as string) || `Tài liệu ${record.documentId}`,
         },
       };

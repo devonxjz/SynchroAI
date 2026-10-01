@@ -303,6 +303,7 @@ describe('Chatbot AI Tiếp nhận & RAG (Khối 23)', () => {
         'x-mode': 'demo',
       },
       body: JSON.stringify({
+        idempotencyKey: 'cb12_key',
         message: 'Tạo bài đăng Shopee mới cho sản phẩm nông sản',
         documentText: 'Tên sản phẩm: Trà Ô Long Búp Non\nTrọng lượng: 250g\nXuất xứ: Lâm Đồng\nThương hiệu: Bảo Lộc Tea',
       }),

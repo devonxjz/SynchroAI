@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { BudgetLedger } from '../model-call/budget.ts';
+import { BudgetLedger } from '../model-call/budget.ts';
 import type { ChatbotMode } from './types.ts';
+
+export const globalEmbeddingBudgetLedger = new BudgetLedger();
 
 export interface EmbeddingOptions {
   model?: string;
@@ -52,7 +54,7 @@ export class OpenAIEmbeddingProvider {
     this.model = options.model ?? 'text-embedding-3-small';
     this.dimensions = options.dimensions ?? 1536;
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY;
-    this.budgetLedger = options.budgetLedger;
+    this.budgetLedger = options.budgetLedger ?? globalEmbeddingBudgetLedger;
     this.cache = new EmbeddingCache();
   }
 
@@ -81,12 +83,7 @@ export class OpenAIEmbeddingProvider {
     let embedding: number[];
 
     if (this.apiKey && context?.mode === 'live') {
-      try {
-        embedding = await this.callLiveApi(trimmed);
-      } catch {
-        // Fallback to deterministic embedding on live network failure in non-strict modes
-        embedding = this.generateDeterministicVector(trimmed);
-      }
+      embedding = await this.callLiveApi(trimmed);
     } else {
       embedding = this.generateDeterministicVector(trimmed);
     }

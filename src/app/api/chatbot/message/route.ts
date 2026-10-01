@@ -1,26 +1,29 @@
 import type { ServerContext, UserRole } from '../../../../ai/agents/assistant/types.ts';
+import { runAssistant } from '../../../../ai/agents/assistant/agent.ts';
 import {
   globalIdempotencyManager,
   IdempotencyConflictError,
 } from '../../../../ai/agents/assistant/idempotency.ts';
+import { classifyChatRoute } from '../../../../ai/chatbot/router.ts';
 import { handleIntakeRequest } from '../../../../ai/chatbot/intake-handler.ts';
-import type { IntakeApiRequest } from '../../../../ai/chatbot/types.ts';
-
-// Default RAG retrieval scoreThreshold per product spec is 0.70
-export const INTAKE_SCORE_THRESHOLD = 0.70;
 
 export async function POST(req: Request) {
   try {
-    const body: IntakeApiRequest = await req.json();
+    const body = await req.json();
     const {
       message = '',
       documentText = '',
       idempotencyKey,
+      conversationId,
+      targetProposalId,
+      store = 'Shopee VN',
+      targetLocale = 'vi',
+      intent = 'prepare_listing',
     } = body;
 
     if (!message && !documentText) {
       return Response.json(
-        { error: 'Vui lòng cung cấp nội dung tin nhắn hoặc tài liệu quy cách sản phẩm.' },
+        { error: 'Nội dung tin nhắn hoặc tài liệu không được để trống.' },
         { status: 400 }
       );
     }
@@ -35,7 +38,8 @@ export async function POST(req: Request) {
     const tenantId = req.headers.get('x-tenant-id') || 'tenant_vietnam';
     const userId = req.headers.get('x-user-id') || 'user_demo_1';
     const role = (req.headers.get('x-user-role') || 'admin') as UserRole;
-    const mode = (req.headers.get('x-mode') || 'demo') as 'live' | 'demo';
+    const defaultMode = process.env.OPENAI_API_KEY ? 'live' : 'demo';
+    const mode = (req.headers.get('x-mode') || defaultMode) as 'live' | 'demo';
     const userTimezone = req.headers.get('x-timezone') || 'Asia/Ho_Chi_Minh';
 
     const serverContext: ServerContext = {
@@ -48,8 +52,10 @@ export async function POST(req: Request) {
       userTimezone,
     };
 
-    // Check idempotency lock
-    const payloadToHash = JSON.stringify({ message, documentText });
+    const route = classifyChatRoute({ message, documentText });
+
+    // Enforce idempotency across all requests
+    const payloadToHash = JSON.stringify({ message, documentText, route });
     let lockAcquired = false;
     try {
       const lockRes = globalIdempotencyManager.acquireLock(serverContext, idempotencyKey, payloadToHash);
@@ -70,16 +76,30 @@ export async function POST(req: Request) {
       throw err;
     }
 
-    const result = await handleIntakeRequest(serverContext, body);
+    let responsePayload: unknown;
 
-    if (lockAcquired) {
-      globalIdempotencyManager.complete(serverContext, idempotencyKey, result.body);
+    if (route === 'intake') {
+      const intakeRes = await handleIntakeRequest(serverContext, {
+        message,
+        documentText,
+        idempotencyKey,
+        conversationId,
+        store,
+        targetLocale,
+        intent,
+      });
+      responsePayload = intakeRes.body;
+    } else {
+      responsePayload = await runAssistant(serverContext, message, conversationId, targetProposalId);
     }
 
-    return Response.json(result.body, { status: result.status });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: errorMsg }, { status: 500 });
+    if (lockAcquired) {
+      globalIdempotencyManager.complete(serverContext, idempotencyKey, responsePayload);
+    }
+
+    return Response.json(responsePayload);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Lỗi hệ thống';
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
-

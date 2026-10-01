@@ -42,7 +42,7 @@ export class RagRetrieverPipeline {
     embeddingProvider?: OpenAIEmbeddingProvider;
     vectorStore?: TenantIsolatedVectorStore;
   }) {
-    this.chunker = options?.chunker || new RecursiveTextChunker();
+    this.chunker = options?.chunker || new RecursiveTextChunker({ chunkSize: 60, chunkOverlap: 15 });
     this.embeddingProvider = options?.embeddingProvider || new OpenAIEmbeddingProvider();
     this.vectorStore = options?.vectorStore || globalVectorStore;
   }
@@ -52,6 +52,9 @@ export class RagRetrieverPipeline {
     options: RagIngestOptions
   ): Promise<DocumentChunk[]> {
     const mode = options.mode || 'demo';
+    // Purge old versions of this documentId to avoid stale chunks
+    this.vectorStore.deleteDocument(options.tenantId, mode, options.documentId);
+
     const chunks = this.chunker.chunkText(text, {
       documentId: options.documentId,
       documentVersion: options.documentVersion || 1,

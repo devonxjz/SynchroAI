@@ -1,12 +1,12 @@
 import type { AssistantResponse, ServerContext } from './types.ts';
 import { redactString } from '../exception/sanitizer.ts';
 
-export interface IdempotencyEntry {
+export interface IdempotencyEntry<T = unknown> {
   scopedKey: string;
   payloadHash: string;
   status: 'in_progress' | 'completed';
   createdAt: number;
-  response?: AssistantResponse;
+  response?: T;
 }
 
 export class IdempotencyConflictError extends Error {
@@ -18,7 +18,7 @@ export class IdempotencyConflictError extends Error {
 }
 
 export class IdempotencyManager {
-  private entries = new Map<string, IdempotencyEntry>();
+  private entries = new Map<string, IdempotencyEntry<unknown>>();
 
   private computeScopedKey(context: ServerContext, idempotencyKey: string): string {
     return [context.tenantId, context.userId, context.mode, idempotencyKey].join('::');
@@ -33,11 +33,11 @@ export class IdempotencyManager {
     return `hash_${hash}`;
   }
 
-  public acquireLock(
+  public acquireLock<T = AssistantResponse>(
     context: ServerContext,
     idempotencyKey: string,
     message: string
-  ): { acquired: boolean; existingResponse?: AssistantResponse } {
+  ): { acquired: boolean; existingResponse?: T } {
     const scopedKey = this.computeScopedKey(context, idempotencyKey);
     const payloadHash = this.hashMessage(message);
     const existing = this.entries.get(scopedKey);
@@ -56,11 +56,15 @@ export class IdempotencyManager {
 
       if (existing.status === 'completed' && existing.response) {
         // Re-verify current active permissions before returning cached idempotent response
-        const safeResponse = { ...existing.response };
-        if (context.role === 'viewer') {
+        const safeResponse = (
+          typeof existing.response === 'object' && existing.response !== null
+            ? { ...existing.response }
+            : existing.response
+        ) as Record<string, unknown>;
+        if (context.role === 'viewer' && typeof safeResponse.answer === 'string') {
           safeResponse.answer = redactString(safeResponse.answer);
         }
-        return { acquired: false, existingResponse: safeResponse };
+        return { acquired: false, existingResponse: safeResponse as T };
       }
     }
 
@@ -75,7 +79,7 @@ export class IdempotencyManager {
     return { acquired: true };
   }
 
-  public complete(context: ServerContext, idempotencyKey: string, response: AssistantResponse): void {
+  public complete<T = AssistantResponse>(context: ServerContext, idempotencyKey: string, response: T): void {
     const scopedKey = this.computeScopedKey(context, idempotencyKey);
     const existing = this.entries.get(scopedKey);
     if (!existing) return;
