@@ -26,7 +26,20 @@ export default function OrdersPage() {
   };
 
   useEffect(() => {
-    loadOrders();
+    let ignore = false;
+    fetch("/api/marketplace/orders")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!ignore && data.success && Array.isArray(data.orders)) {
+          setOrders(data.orders);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch initial orders:", err);
+      });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   /**

@@ -33,6 +33,7 @@ describe('Tác nhân Ngoại lệ (Exception Handling Agent - Khối 13)', () =>
         mode: 'demo',
         failureClass: 'auth_credential',
       });
+      assert.ok(dedupKey);
 
       globalTaskDedupStore.recordTask(
         {
@@ -220,6 +221,7 @@ describe('Tác nhân Ngoại lệ (Exception Handling Agent - Khối 13)', () =>
     // Stamping logic: Code strictly overrides LLM
     const finalNextAction = classification.nextAction;
     assert.equal(finalNextAction, 'reconcile_external', 'Mã nguồn phủ quyết khuyến nghị LLM');
+    assert.notEqual(finalNextAction, llmRecommendation.nextAction);
   });
 
   it('EX07: Dữ liệu nhạy cảm bị lọc theo danh sách trường an toàn', () => {

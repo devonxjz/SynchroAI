@@ -21,10 +21,6 @@ import {
 } from '../../src/ai/agents/keywords/ranker.ts';
 import {
   generateKeywords,
-} from '../../src/ai/agents/keywords/generator.ts';
-import {
-  KEYWORD_PROMPT_VERSION,
-} from '../../src/ai/agents/keywords/prompt.ts';
 import { ModelCallGateway } from '../../src/ai/model-call/index.ts';
 
 test('Facts: Tái sử dụng facts từ content và phân giải thuộc tính từ snapshot', () => {

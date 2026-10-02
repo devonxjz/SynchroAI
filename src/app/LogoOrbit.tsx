@@ -16,7 +16,6 @@ const LOGOS = [
 
 export default function LogoOrbit() {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const RADIUS = 230; // Radius of the orbit
 
   // Get pre-defined scattered coordinates relative to center
   const getCoords = (index: number) => {

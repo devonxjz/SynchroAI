@@ -28,7 +28,20 @@ export default function InventoryPage() {
   };
 
   useEffect(() => {
-    loadInventory();
+    let ignore = false;
+    fetch("/api/marketplace/inventory")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!ignore && data.success && Array.isArray(data.inventory)) {
+          setInventory(data.inventory);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to load inventory:", err);
+      });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   /**

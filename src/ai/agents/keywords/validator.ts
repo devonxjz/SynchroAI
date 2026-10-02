@@ -58,7 +58,6 @@ export function validateKeywordOutput(
   raw: unknown,
   context: KeywordValidationContext
 ): KeywordValidationResult {
-  const errors: string[] = [];
   const warnings: string[] = [];
 
   if (typeof raw !== 'object' || raw === null) {

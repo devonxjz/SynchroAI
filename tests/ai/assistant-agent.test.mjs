@@ -14,7 +14,6 @@ import {
   handleChatApproval,
   enforceServerTruth,
   IdempotencyConflictError,
-  demoStore,
 } from '../../src/ai/agents/assistant/index.ts';
 
 describe('Trợ lý Công việc (Work Assistant Agent - Khối 14)', () => {
@@ -172,7 +171,6 @@ describe('Trợ lý Công việc (Work Assistant Agent - Khối 14)', () => {
     });
 
     const proposalId = preview.draft.proposalId;
-    const originalHash = preview.draft.proposalHash;
 
     // Simulate tampering or state change: payload hash is different
     const approvalRes = handleChatApproval(adminContext, proposalId, 'tampered_hash_999');

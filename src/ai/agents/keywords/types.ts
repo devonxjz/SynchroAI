@@ -1,5 +1,4 @@
 import type { ProductSnapshot } from '../../workflows/prepare-listing/types.ts';
-import type { ProductFact } from '../content/types.ts';
 
 export type KeywordBasis = 'product_fact' | 'measured_dataset';
 export type GroundingStatus = 'verified' | 'unverified_semantic';
